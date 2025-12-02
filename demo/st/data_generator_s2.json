@@ -1,0 +1,135 @@
+{
+    "generators": [
+        {
+            "name": "_gen_payloads",
+            "topic": "demo_topic_2",
+            "vars": {
+                "PAYLOAD_ID": {
+                    "_gen": "uuid"
+                }
+            },
+            "key": {
+                "id": {
+                    "_gen": "var",
+                    "var": "PAYLOAD_ID"
+                }
+            },
+            "value": {
+                "some_json_1": {
+                    "_gen": "interpolate",
+                    "template": "{\"id\":\":id\", \"note\": \":note\"}",
+                    "params": {
+                        "id": {
+                            "_gen": "var",
+                            "var": "PAYLOAD_ID"
+                        },
+                        "note": {
+                            "_gen": "string",
+                            "expr": "#{Lorem.paragraph}"
+                        }
+                    }
+                },
+                "some_json_2": {
+                    "_gen": "interpolate",
+                    "template": "{\"profile\": {\"name\": \":name\", \"emails\": [\":email1\", \":email2\"]}}",
+                    "params": {
+                        "name": {
+                            "_gen": "string",
+                            "expr": "#{Name.firstName} #{Name.lastName}"
+                        },
+                        "email1": {
+                            "_gen": "string",
+                            "expr": "#{Internet.emailAddress}"
+                        },
+                        "email2": {
+                            "_gen": "string",
+                            "expr": "#{Internet.emailAddress}"
+                        }
+                    }
+                },
+                "some_json_3": {
+                    "_gen": "interpolate",
+                    "template": "{\"settings\": {\"theme\": \":theme\", \"notify\": :notify}}",
+                    "params": {
+                        "theme": {
+                            "_gen": "oneOf",
+                            "choices": [
+                                "light",
+                                "dark",
+                                "system"
+                            ]
+                        },
+                        "notify": {
+                            "_gen": "boolean"
+                        }
+                    }
+                },
+                "some_json_4": {
+                    "_gen": "interpolate",
+                    "template": "{\"last_scores\": [:score1,:score2,:score3,:score4,:score5]}",
+                    "params": {
+                        "score1": {
+                            "_gen": "uniformDistribution",
+                            "bounds": [
+                                1,
+                                100
+                            ],
+                            "decimals": 3
+                        },
+                        "score2": {
+                            "_gen": "uniformDistribution",
+                            "bounds": [
+                                1,
+                                100
+                            ],
+                            "decimals": 3
+                        },
+                        "score3": {
+                            "_gen": "uniformDistribution",
+                            "bounds": [
+                                1,
+                                100
+                            ],
+                            "decimals": 3
+                        },
+                        "score4": {
+                            "_gen": "uniformDistribution",
+                            "bounds": [
+                                1,
+                                100
+                            ],
+                            "decimals": 3
+                        },
+                        "score5": {
+                            "_gen": "uniformDistribution",
+                            "bounds": [
+                                1,
+                                100
+                            ],
+                            "decimals": 3
+                        }
+                    }
+                },
+                "create_ts": {
+                    "_gen": "now"
+                }
+            },
+            "localConfigs": {
+                //"throttleMs": 10
+            }
+        }
+    ],
+    "connections": {
+        "kafka": {
+            "kind": "kafka",
+            "topicPolicy": {
+                "policy": "dropAndCreate"
+            },
+            "producerConfigs": {
+                "bootstrap.servers": "kafka:9092",
+                "key.serializer": "io.shadowtraffic.kafka.serdes.JsonSerializer",
+                "value.serializer": "io.shadowtraffic.kafka.serdes.JsonSerializer"
+            }
+        }
+    }
+}

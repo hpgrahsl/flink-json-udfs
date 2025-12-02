@@ -1,0 +1,80 @@
+name: flink-sql-json-udfs
+services:
+  kafka:
+    hostname: kafka
+    image: quay.io/strimzi/kafka:0.47.0-kafka-4.0.0
+    command: [
+      "sh", "-c",
+      "./bin/kafka-storage.sh format --standalone -t $${RANDOM_STORAGE_UUID} -c ./config/server.properties && bin/kafka-server-start.sh ./config/server.properties --override advertised.listeners=$${KAFKA_ADVERTISED_LISTENERS} --override num.partitions=$${KAFKA_NUM_PARTITIONS} --override group.min.session.timeout.ms=$${KAFKA_GROUP_MIN_SESSION_TIMEOUT_MS}"
+    ]
+    ports:
+      - 9092:9092
+    environment:
+      LOG_DIR: "/tmp/logs"
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_NUM_PARTITIONS: 1
+      KAFKA_GROUP_MIN_SESSION_TIMEOUT_MS: 100
+      RANDOM_STORAGE_UUID: X6GgnrKiQJmebuL2rWU9dw
+    networks:
+      - my-network
+  jobmanager:
+    image: flink:1.20.3-scala_2.12-java17
+    hostname: jobmanager
+    ports:
+      - "8081:8081"
+    command: jobmanager
+    environment:
+      - |
+        FLINK_PROPERTIES=
+        jobmanager.rpc.address: jobmanager
+    volumes:
+      - ./flink/lib/flink-sql-connector-kafka-3.3.0-1.20.jar:/opt/flink/lib/flink-sql-connector-kafka-3.3.0-1.20.jar
+      - ./flink/lib/custom-json-udfs-1.0-SNAPSHOT.jar:/opt/flink/lib/custom-json-udfs-1.0-SNAPSHOT.jar
+      - ./flink/sql:/opt/sql-client/sql
+    networks:
+      - my-network
+  taskmanager:
+    image: flink:1.20.3-scala_2.12-java17
+    hostname: taskmanager
+    depends_on:
+      - jobmanager
+    command: taskmanager
+    environment:
+      - |
+        FLINK_PROPERTIES=
+        jobmanager.rpc.address: jobmanager
+        taskmanager.numberOfTaskSlots: 10
+        taskmanager.memory.process.size: 2048m
+        taskmanager.memory.framework.off-heap.size: 256m
+    volumes:
+      - ./flink/lib/flink-sql-connector-kafka-3.3.0-1.20.jar:/opt/flink/lib/flink-sql-connector-kafka-3.3.0-1.20.jar
+      - ./flink/lib/custom-json-udfs-1.0-SNAPSHOT.jar:/opt/flink/lib/custom-json-udfs-1.0-SNAPSHOT.jar
+    networks:
+      - my-network
+  shadowtraffic1:
+    image: shadowtraffic/shadowtraffic:1.11.11
+    hostname: shadowtraffic1
+    depends_on:
+      - kafka
+    env_file:
+      - ./st/license.env
+    volumes:
+      - ./st/data_generator_s1.json:/data/config.json
+    command: --config /data/config.json --seed 1111 --sample 100000
+    networks:
+      - my-network
+  shadowtraffic2:
+    image: shadowtraffic/shadowtraffic:1.11.11
+    hostname: shadowtraffic2
+    depends_on:
+      - kafka
+    env_file:
+      - ./st/license.env
+    volumes:
+      - ./st/data_generator_s2.json:/data/config.json
+    command: --config /data/config.json --seed 1111 --sample 100000
+    networks:
+      - my-network
+networks:
+  my-network:
+    name: flink-sql-json-udfs
