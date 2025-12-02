@@ -23,7 +23,7 @@ The examples below are all written so they can be executed directly in the Flink
 
 ## Usage Examples
 
-All examples assume you started the Flink SQL client, have previsouly built the function from sources, added the JAR, and registerd the UDF successfully.
+All examples assume you started the Flink SQL client, have previously built the function from sources, added the JAR, and registerd the UDF successfully.
 
 You can directly copy & paste the `SELECT` queries into the Flink SQL CLI:
 
@@ -98,7 +98,7 @@ FROM (
 	SELECT FROM_JSON(v.json, 'MAP<INT, STRING>') AS parsed_map
 	FROM (VALUES 
         ROW('{"1":"first","2":"second"}'),
-        ROW('{"1":"erster","1":"zweiter"}')
+        ROW('{"1":"erster","2":"zweiter"}')
     ) AS v(json)
 );
 ```
