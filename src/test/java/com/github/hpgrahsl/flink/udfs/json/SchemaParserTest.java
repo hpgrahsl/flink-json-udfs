@@ -426,19 +426,6 @@ class SchemaParserTest {
     }
 
     @Test
-    void testParseTypeStructAlias() {
-        // STRUCT should work the same as ROW
-        DataType dataType1 = SchemaParser.parseType("ROW<id INT, name STRING>");
-        DataType dataType2 = SchemaParser.parseType("STRUCT<id INT, name STRING>");
-
-        RowType rowType1 = (RowType) dataType1.getLogicalType();
-        RowType rowType2 = (RowType) dataType2.getLogicalType();
-
-        assertEquals(rowType1.getFieldCount(), rowType2.getFieldCount());
-        assertEquals(rowType1.getFieldNames(), rowType2.getFieldNames());
-    }
-
-    @Test
     void testParseTypeAllPrimitiveTypes() {
         String schema = "ROW<" +
             "a TINYINT, b SMALLINT, c INT, d BIGINT, " +

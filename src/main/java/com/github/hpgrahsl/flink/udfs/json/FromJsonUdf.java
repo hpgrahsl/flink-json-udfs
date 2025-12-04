@@ -70,19 +70,21 @@ public class FromJsonUdf extends ScalarFunction {
     }
 
     /**
-     * Parses JSON into properly typed flink data structures based on the given JSON
-     * string
-     * and the specified target schema. Supports both individual JSON objects and
-     * JSON arrays.
+     * Parses JSON into properly typed Flink data structures based on the given JSON string
+     * and the specified target schema. Supports both individual JSON objects and JSON arrays.
      *
-     * @param jsonString   JSON string to parse (object or array)
-     * @param schemaString Schema definition:
-     *                     - For JSON arrays: "ARRAY<element_type>" or
-     *                     "ARRAY<ROW<field1 TYPE1, ...>>"
-     *                     - For JSON objects: "ROW<field1 TYPE1, field2 TYPE2,
-     *                     ...>"
-     * @return Row for single object, or Array for JSON array. Details see
-     *         {@link #getTypeInference(DataTypeFactory)}
+     * @param jsonString   the JSON string to parse (can be a JSON object or JSON array); if null or empty, returns null
+     * @param schemaString the schema definition string specifying the target data type:
+     *                     <ul>
+     *                       <li>For JSON arrays: {@code "ARRAY<element_type>"} or {@code "ARRAY<ROW<field1 TYPE1, ...>>"}</li>
+     *                       <li>For JSON objects as rows: {@code "ROW<field1 TYPE1, field2 TYPE2, ...>"}</li>
+     *                       <li>For JSON objects as maps: {@code "MAP<KEY_TYPE, VALUE_TYPE>"}</li>
+     *                     </ul>
+     * @return a {@link Row} for a single JSON object with ROW schema, a {@link Map} for a JSON object with MAP schema,
+     *         or an array (Object[]) for a JSON array; returns null if jsonString is null or empty
+     * @throws IllegalArgumentException if schemaString is null or empty, if the schema format doesn't match the JSON structure,
+     *                                  or if the JSON structure is neither an object nor an array
+     * @throws RuntimeException if JSON parsing fails
      */
     public Object eval(String jsonString, String schemaString) {
         if (jsonString == null || jsonString.trim().isEmpty()) {
@@ -126,9 +128,10 @@ public class FromJsonUdf extends ScalarFunction {
     }
 
     /**
-     * Alternative method to allow for proper initialization whenever this scalar function gets
-     * used in a Flink CDC pipeline context. In this case, lifecycle hooks such as the
-     * open(...) method won't get automatically called unfortunately.
+     * Initializes the function by creating the ObjectMapper and schema cache.
+     * This method provides an alternative initialization path for contexts where the
+     * standard Flink lifecycle hooks (such as {@link #open(FunctionContext)}) are not
+     * automatically invoked, such as when using this function in Flink CDC pipelines.
      */
     private void initialize() {
         objectMapper = new ObjectMapper();
@@ -143,16 +146,23 @@ public class FromJsonUdf extends ScalarFunction {
     }
 
     /**
-     * Gets a cached parsed schema or parses and caches it if not present.
-     * Uses LRU eviction when cache is full.
+     * Retrieves a cached parsed schema or parses and caches it if not present.
+     * The cache uses LRU (Least Recently Used) eviction policy when it reaches
+     * the maximum size of {@value #SCHEMA_LRU_CACHE_SIZE} entries.
+     *
+     * @param schemaString the schema definition string to parse and cache
+     * @return the parsed {@link DataType} corresponding to the schema string
      */
     private DataType getCachedSchema(String schemaString) {
         return schemaCache.computeIfAbsent(schemaString, SchemaParser::parseType);
     }
 
     /**
-     * Parses a single JSON object into a Row.
-     * Schema format: "ROW<field1 TYPE1, field2 TYPE2, ...>"
+     * Parses a single JSON object into a Flink {@link Row}.
+     *
+     * @param jsonObject   the JSON object node to parse
+     * @param schemaString the schema definition string with format {@code "ROW<field1 TYPE1, field2 TYPE2, ...>"}
+     * @return a {@link Row} containing the parsed field values in the order specified by the schema
      */
     private Row parseObject(JsonNode jsonObject, String schemaString) {
         DataType rowType = getCachedSchema(schemaString);
@@ -169,8 +179,13 @@ public class FromJsonUdf extends ScalarFunction {
     }
 
     /**
-     * Parses a JSON object into a Map.
-     * Schema format: "MAP<KEY_TYPE, VALUE_TYPE>"
+     * Parses a JSON object into a {@link Map}.
+     * JSON object keys (which are always strings) are converted to the target key type specified in the schema.
+     *
+     * @param jsonObject   the JSON object node to parse
+     * @param schemaString the schema definition string with format {@code "MAP<KEY_TYPE, VALUE_TYPE>"}
+     * @return a {@link Map} containing the parsed key-value pairs with types as specified in the schema
+     * @throws IllegalArgumentException if the schema is not a MAP type
      */
     private Map<Object, Object> parseMap(JsonNode jsonObject, String schemaString) {
         DataType mapType = getCachedSchema(schemaString);
@@ -194,10 +209,18 @@ public class FromJsonUdf extends ScalarFunction {
     }
 
     /**
-     * Parses a JSON array into an Object array.
-     * Schema format: "ARRAY<element_type>" where element_type can be:
-     * - A simple type: "ARRAY<INT>", "ARRAY<STRING>"
-     * - A ROW type: "ARRAY<ROW<field1 TYPE1, field2 TYPE2>>"
+     * Parses a JSON array into a typed Java array.
+     *
+     * @param jsonArray    the JSON array node to parse
+     * @param schemaString the schema definition string with format {@code "ARRAY<element_type>"} where element_type can be:
+     *                     <ul>
+     *                       <li>A simple type: {@code "ARRAY<INT>"}, {@code "ARRAY<STRING>"}</li>
+     *                       <li>A ROW type: {@code "ARRAY<ROW<field1 TYPE1, field2 TYPE2>>"}</li>
+     *                       <li>A nested ARRAY: {@code "ARRAY<ARRAY<...>>"}</li>
+     *                       <li>A MAP type: {@code "ARRAY<MAP<KEY_TYPE, VALUE_TYPE>>"}</li>
+     *                     </ul>
+     * @return a typed array (Object[]) containing the parsed elements with types as specified in the schema
+     * @throws IllegalArgumentException if the schema is not an ARRAY type
      */
     private Object parseArray(JsonNode jsonArray, String schemaString) {
         DataType arrayType = getCachedSchema(schemaString);
@@ -221,7 +244,12 @@ public class FromJsonUdf extends ScalarFunction {
     }
 
     /**
-     * Converts a JsonNode to a Java object based on the target Flink type.
+     * Converts a JsonNode to a Java object based on the target Flink logical type.
+     * Handles the most common Flink data types including primitives, date/time types, arrays, rows, and maps.
+     *
+     * @param node       the JSON node to convert; if null or represents a JSON null value, returns null
+     * @param targetType the target Flink {@link LogicalType} to convert the node to
+     * @return the converted Java object matching the target type, or null if the node is null
      */
     private Object convertJsonNodeToValue(JsonNode node, LogicalType targetType) {
         if (node == null || node.isNull()) {
@@ -320,8 +348,14 @@ public class FromJsonUdf extends ScalarFunction {
     }
 
     /**
-     * Converts a string (JSON object key) to the target type.
-     * JSON object keys are always strings, but MAP keys can be of any type.
+     * Converts a string value to the target Flink logical type.
+     * This method is primarily used for converting JSON object keys (which are always strings)
+     * to the appropriate key type when parsing MAP types, since MAP keys can be of none-string types.
+     *
+     * @param str        the string value to convert; if null, returns null
+     * @param targetType the target Flink {@link LogicalType} to convert the string to
+     * @return the converted Java object matching the target type, or null if str is null;
+     *         for unsupported types, returns the original string value
      */
     private Object convertStringToType(String str, LogicalType targetType) {
         if (str == null) {
@@ -376,6 +410,14 @@ public class FromJsonUdf extends ScalarFunction {
         }
     }
 
+    /**
+     * Creates a typed Java array from a list of elements based on the specified element type.
+     * Uses reflection to create an array of the appropriate type for the given logical type.
+     *
+     * @param elements    the list of elements to convert into an array
+     * @param elementType the Flink {@link LogicalType} of the array elements
+     * @return a typed array (e.g., Integer[], String[], Row[]) containing the elements
+     */
     private Object createTypedArray(List<Object> elements, LogicalType elementType) {
         Class<?> elementClass = getDefaultConversionClass(elementType);
         Object typedArray = Array.newInstance(elementClass, elements.size());
@@ -385,6 +427,14 @@ public class FromJsonUdf extends ScalarFunction {
         return typedArray;
     }
 
+    /**
+     * Determines the default Java class used for converting values of a given Flink logical type.
+     * This mapping is used when creating typed arrays to ensure the correct array component type.
+     *
+     * @param logicalType the Flink {@link LogicalType} to get the conversion class for
+     * @return the Java {@link Class} that represents the default conversion target for the logical type;
+     *         returns {@link Object}.class for unsupported or unknown types
+     */
     private Class<?> getDefaultConversionClass(LogicalType logicalType) {
         switch (logicalType.getTypeRoot()) {
             case BOOLEAN:
@@ -430,6 +480,14 @@ public class FromJsonUdf extends ScalarFunction {
         }
     }
 
+    /**
+     * Parses a string value into a {@link LocalTime} object.
+     * Attempts ISO-8601 format first, then falls back to SQL TIME format if that fails.
+     *
+     * @param value the string representation of a time value
+     * @return the parsed {@link LocalTime} object
+     * @throws DateTimeParseException if the value cannot be parsed as a time
+     */
     private LocalTime parseLocalTime(String value) {
         try {
             return LocalTime.parse(value);
@@ -438,6 +496,19 @@ public class FromJsonUdf extends ScalarFunction {
         }
     }
 
+    /**
+     * Parses a string value into a {@link LocalDateTime} object.
+     * Attempts multiple formats in order:
+     * <ol>
+     *   <li>ISO-8601 format (e.g., "2023-01-01T12:30:00")</li>
+     *   <li>Space-separated format normalized to ISO-8601 (e.g., "2023-01-01 12:30:00")</li>
+     *   <li>SQL TIMESTAMP format</li>
+     * </ol>
+     *
+     * @param value the string representation of a date-time value
+     * @return the parsed {@link LocalDateTime} object
+     * @throws IllegalArgumentException if the value cannot be parsed as a date-time in any supported format
+     */
     private LocalDateTime parseLocalDateTime(String value) {
         try {
             return LocalDateTime.parse(value);
@@ -453,6 +524,15 @@ public class FromJsonUdf extends ScalarFunction {
         return java.sql.Timestamp.valueOf(value).toLocalDateTime();
     }
 
+    /**
+     * Parses a string value into an {@link Instant} object.
+     * Attempts ISO-8601 instant format first (e.g., "2023-01-01T12:30:00Z").
+     * If that fails, parses as a {@link LocalDateTime} and converts to an instant using UTC timezone.
+     *
+     * @param value the string representation of an instant value
+     * @return the parsed {@link Instant} object
+     * @throws DateTimeParseException if the value cannot be parsed as an instant or date-time
+     */
     private Instant parseInstant(String value) {
         try {
             return Instant.parse(value);
