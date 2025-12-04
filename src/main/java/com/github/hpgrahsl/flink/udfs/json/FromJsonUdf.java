@@ -26,45 +26,48 @@ import java.time.format.DateTimeParseException;
 import java.util.*;
 
 /**
- * Custom function to parse JSON objects or arrays with explicit target schema definition.
- * Inspired by Databricks' `from_json` function (https://docs.databricks.com/aws/en/sql/language-manual/functions/from_json)
- *  
+ * Custom function to parse JSON objects or arrays with explicit target schema
+ * definition.
+ * Inspired by Databricks' `from_json` function
+ * (https://docs.databricks.com/aws/en/sql/language-manual/functions/from_json)
+ * 
  * Usage:
- *   SELECT FROM_JSON('[{"id": 1, "name": "John"}, {"id": 2, "name": "Jane"}]', 'ARRAY<ROW<id INT, name STRING>>')
- *   Returns: ARRAY<ROW<id INT, name STRING>>
+ * SELECT FROM_JSON('[{"id": 1, "name": "John"}, {"id": 2, "name": "Jane"}]',
+ * 'ARRAY<ROW<id INT, name STRING>>')
+ * Returns:
+ * ARRAY<ROW<id INT, name STRING>>
  */
 public class FromJsonUdf extends ScalarFunction {
 
     private static final int SCHEMA_LRU_CACHE_SIZE = 32;
 
-    private transient ObjectMapper objectMapper = new ObjectMapper();
+    private transient ObjectMapper objectMapper;
 
     // used as LRU cache for parsed schemas (schema string -> parsed DataType)
     private transient Map<String, DataType> schemaCache;
 
+    private transient boolean isInitialized = false;
+
     @Override
     public void open(FunctionContext context) throws Exception {
         super.open(context);
-        objectMapper = new ObjectMapper();
-        schemaCache = Collections.synchronizedMap(
-            new LinkedHashMap<String, DataType>(SCHEMA_LRU_CACHE_SIZE, 0.75f, true) {
-                @Override
-                protected boolean removeEldestEntry(Map.Entry<String, DataType> eldest) {
-                    return size() > SCHEMA_LRU_CACHE_SIZE;
-                }
-            }
-        );
+        initialize();
     }
 
     /**
-     * Parses JSON into properly typed flink data structures based on the given JSON string 
-     * and the specified target schema. Supports both individual JSON objects and JSON arrays.
+     * Parses JSON into properly typed flink data structures based on the given JSON
+     * string
+     * and the specified target schema. Supports both individual JSON objects and
+     * JSON arrays.
      *
-     * @param jsonString JSON string to parse (object or array)
+     * @param jsonString   JSON string to parse (object or array)
      * @param schemaString Schema definition:
-     *                     - For JSON arrays: "ARRAY<element_type>" or "ARRAY<ROW<field1 TYPE1, ...>>"
-     *                     - For JSON objects: "ROW<field1 TYPE1, field2 TYPE2, ...>"
-     * @return Row for single object, or Array for JSON array. Details see {@link #getTypeInference(DataTypeFactory)}
+     *                     - For JSON arrays: "ARRAY<element_type>" or
+     *                     "ARRAY<ROW<field1 TYPE1, ...>>"
+     *                     - For JSON objects: "ROW<field1 TYPE1, field2 TYPE2,
+     *                     ...>"
+     * @return Row for single object, or Array for JSON array. Details see
+     *         {@link #getTypeInference(DataTypeFactory)}
      */
     public Object eval(String jsonString, String schemaString) {
         if (jsonString == null || jsonString.trim().isEmpty()) {
@@ -73,6 +76,10 @@ public class FromJsonUdf extends ScalarFunction {
 
         if (schemaString == null || schemaString.trim().isEmpty()) {
             throw new IllegalArgumentException("schemaString parameter cannot be null or empty");
+        }
+
+        if (!isInitialized) {
+            initialize();
         }
 
         try {
@@ -85,14 +92,12 @@ public class FromJsonUdf extends ScalarFunction {
                     return parseMap(rootNode, schemaString);
                 } else {
                     throw new IllegalArgumentException(
-                        "for JSON objects, schema must start with ROW<...> or MAP<...> - got: " + schemaString
-                    );
+                            "for JSON objects, schema must start with ROW<...> or MAP<...> - got: " + schemaString);
                 }
             } else if (rootNode.isArray()) {
                 if (!schema.startsWith("ARRAY<")) {
                     throw new IllegalArgumentException(
-                        "for JSON arrays, schema must start with ARRAY<...> - got: " + schemaString
-                    );
+                            "for JSON arrays, schema must start with ARRAY<...> - got: " + schemaString);
                 }
                 return parseArray(rootNode, schemaString);
             } else {
@@ -103,6 +108,23 @@ public class FromJsonUdf extends ScalarFunction {
         } catch (Exception e) {
             throw new RuntimeException("failed to parse JSON: " + e.getMessage(), e);
         }
+    }
+
+    /**
+     * Alternative method to allow for proper initialization whenever this scalar function gets
+     * used in a Flink CDC pipeline context. In this case, lifecycle hooks such as the
+     * open(...) method won't get automatically called unfortunately.
+     */
+    private void initialize() {
+        objectMapper = new ObjectMapper();
+        schemaCache = Collections.synchronizedMap(
+                new LinkedHashMap<String, DataType>(SCHEMA_LRU_CACHE_SIZE, 0.75f, true) {
+                    @Override
+                    protected boolean removeEldestEntry(Map.Entry<String, DataType> eldest) {
+                        return size() > SCHEMA_LRU_CACHE_SIZE;
+                    }
+                });
+        isInitialized = true;
     }
 
     /**
@@ -141,7 +163,7 @@ public class FromJsonUdf extends ScalarFunction {
             throw new IllegalArgumentException("Schema must be a MAP type, got: " + schemaString);
         }
 
-        MapType logicalMapType = (MapType)mapType.getLogicalType();
+        MapType logicalMapType = (MapType) mapType.getLogicalType();
         LogicalType keyType = logicalMapType.getKeyType();
         LogicalType valueType = logicalMapType.getValueType();
 
@@ -159,8 +181,8 @@ public class FromJsonUdf extends ScalarFunction {
     /**
      * Parses a JSON array into an Object array.
      * Schema format: "ARRAY<element_type>" where element_type can be:
-     *   - A simple type: "ARRAY<INT>", "ARRAY<STRING>"
-     *   - A ROW type: "ARRAY<ROW<field1 TYPE1, field2 TYPE2>>"
+     * - A simple type: "ARRAY<INT>", "ARRAY<STRING>"
+     * - A ROW type: "ARRAY<ROW<field1 TYPE1, field2 TYPE2>>"
      */
     private Object parseArray(JsonNode jsonArray, String schemaString) {
         DataType arrayType = getCachedSchema(schemaString);
@@ -168,7 +190,7 @@ public class FromJsonUdf extends ScalarFunction {
             throw new IllegalArgumentException("schema must be an ARRAY type, got: " + schemaString);
         }
 
-        ArrayType logicalArrayType = (ArrayType)arrayType.getLogicalType();
+        ArrayType logicalArrayType = (ArrayType) arrayType.getLogicalType();
         LogicalType elementType = logicalArrayType.getElementType();
 
         if (jsonArray.size() == 0) {
@@ -242,7 +264,7 @@ public class FromJsonUdf extends ScalarFunction {
                 return parseInstant(node.asText());
 
             case ARRAY:
-                ArrayType arrayType = (ArrayType)targetType;
+                ArrayType arrayType = (ArrayType) targetType;
                 LogicalType elementType = arrayType.getElementType();
 
                 List<Object> arrayList = new ArrayList<>();
@@ -252,7 +274,7 @@ public class FromJsonUdf extends ScalarFunction {
                 return createTypedArray(arrayList, elementType);
 
             case ROW:
-                RowType rowType = (RowType)targetType;
+                RowType rowType = (RowType) targetType;
                 List<String> nestedFieldNames = rowType.getFieldNames();
                 Row nestedRow = new Row(nestedFieldNames.size());
                 for (int i = 0; i < nestedFieldNames.size(); i++) {
@@ -264,7 +286,7 @@ public class FromJsonUdf extends ScalarFunction {
                 return nestedRow;
 
             case MAP:
-                MapType mapType = (MapType)targetType;
+                MapType mapType = (MapType) targetType;
                 LogicalType keyType = mapType.getKeyType();
                 LogicalType valueType = mapType.getValueType();
                 Map<Object, Object> map = new HashMap<>();
@@ -381,7 +403,7 @@ public class FromJsonUdf extends ScalarFunction {
             case TIMESTAMP_WITH_LOCAL_TIME_ZONE:
                 return Instant.class;
             case ARRAY:
-                ArrayType arrayType = (ArrayType)logicalType;
+                ArrayType arrayType = (ArrayType) logicalType;
                 Class<?> childClass = getDefaultConversionClass(arrayType.getElementType());
                 return Array.newInstance(childClass, 0).getClass();
             case ROW:
@@ -430,15 +452,14 @@ public class FromJsonUdf extends ScalarFunction {
         return TypeInference.newBuilder()
                 // two string arguments: JSON string and schema
                 .inputTypeStrategy(InputTypeStrategies.sequence(
-                    InputTypeStrategies.explicit(DataTypes.STRING()),
-                    InputTypeStrategies.explicit(DataTypes.STRING())
-                ))
-                // output type is determined entirely from the schema parameter given as string literal
+                        InputTypeStrategies.explicit(DataTypes.STRING()),
+                        InputTypeStrategies.explicit(DataTypes.STRING())))
+                // output type is determined entirely from the schema parameter given as string
+                // literal
                 .outputTypeStrategy(callContext -> {
                     if (!callContext.isArgumentLiteral(1) || callContext.isArgumentNull(1)) {
                         throw new IllegalArgumentException(
-                            "2nd argument (schema) must be a string literal, not a column reference or expression"
-                        );
+                                "2nd argument (schema) must be a string literal, not a column reference or expression");
                     }
                     Optional<String> schemaStringOpt = callContext.getArgumentValue(1, String.class);
                     if (!schemaStringOpt.isPresent()) {
@@ -446,16 +467,14 @@ public class FromJsonUdf extends ScalarFunction {
                     }
 
                     String schemaString = schemaStringOpt.get();
-
-                    // parse the schema - it should be either ROW<...> or ARRAY<...> or MAP<...>
-                    DataType outputType = SchemaParser.parseType(schemaString);
                     String schema = schemaString.trim().toUpperCase();
+                    // schema must be one of ROW<...> or MAP<...> or ARRAY<...>
                     if (!schema.startsWith("ROW<") && !schema.startsWith("MAP<") && !schema.startsWith("ARRAY<")) {
                         throw new IllegalArgumentException(
-                            "schema parameter must be either ROW<...>, MAP<...>, or ARRAY<...>. - got: " + schemaString
-                        );
+                                "schema parameter must be either ROW<...>, MAP<...>, or ARRAY<...>. - got: "
+                                        + schemaString);
                     }
-
+                    DataType outputType = SchemaParser.parseType(schema);
                     return Optional.of(outputType);
                 })
                 .build();
