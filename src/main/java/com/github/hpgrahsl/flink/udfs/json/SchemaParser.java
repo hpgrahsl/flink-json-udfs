@@ -213,6 +213,7 @@ public class SchemaParser {
                 return DataTypes.TINYINT();
             case "SMALLINT":
                 return DataTypes.SMALLINT();
+            case "INTEGER":
             case "INT":
                 return DataTypes.INT();
             case "BIGINT":

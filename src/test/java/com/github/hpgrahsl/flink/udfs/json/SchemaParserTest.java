@@ -146,6 +146,27 @@ class SchemaParserTest {
     }
 
     @Test
+    void testIntegerTypeAlias() {
+        // INTEGER should be an alias for INT
+        DataType dataTypeInt = SchemaParser.parseSchema("id INT");
+        DataType dataTypeInteger = SchemaParser.parseSchema("id INTEGER");
+        DataType dataTypeMixed = SchemaParser.parseSchema("count INTEGER, age INT");
+
+        RowType rowTypeInt = (RowType) dataTypeInt.getLogicalType();
+        RowType rowTypeInteger = (RowType) dataTypeInteger.getLogicalType();
+        RowType rowTypeMixed = (RowType) dataTypeMixed.getLogicalType();
+
+        // Both should produce IntType
+        assertTrue(rowTypeInt.getTypeAt(0) instanceof IntType);
+        assertTrue(rowTypeInteger.getTypeAt(0) instanceof IntType);
+
+        // Mixed usage should work
+        assertEquals(2, rowTypeMixed.getFieldCount());
+        assertTrue(rowTypeMixed.getTypeAt(0) instanceof IntType);
+        assertTrue(rowTypeMixed.getTypeAt(1) instanceof IntType);
+    }
+
+    @Test
     void testWhitespaceHandling() {
         DataType dataType = SchemaParser.parseSchema("  id   INT  ,  name   STRING  ");
         RowType rowType = (RowType) dataType.getLogicalType();
