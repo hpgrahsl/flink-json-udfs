@@ -167,6 +167,78 @@ class SchemaParserTest {
     }
 
     @Test
+    void testFieldNameCasingPreservation() {
+        // Field names should be preserved exactly as written, including casing
+        DataType dataType = SchemaParser.parseSchema("phone STRING, Phone INT, PHONE BIGINT");
+        RowType rowType = (RowType) dataType.getLogicalType();
+
+        assertEquals(3, rowType.getFieldCount());
+        // Verify exact field name casing is preserved
+        assertEquals("phone", rowType.getFieldNames().get(0));
+        assertEquals("Phone", rowType.getFieldNames().get(1));
+        assertEquals("PHONE", rowType.getFieldNames().get(2));
+    }
+
+    @Test
+    void testFieldNameCasingInNestedRow() {
+        // Field names in nested ROW types should preserve casing
+        DataType dataType = SchemaParser.parseSchema("user ROW<userId INT, userName STRING, UserEmail STRING>");
+        RowType rowType = (RowType) dataType.getLogicalType();
+
+        assertEquals("user", rowType.getFieldNames().get(0));
+        RowType nestedRow = (RowType) rowType.getTypeAt(0);
+
+        assertEquals(3, nestedRow.getFieldCount());
+        assertEquals("userId", nestedRow.getFieldNames().get(0));
+        assertEquals("userName", nestedRow.getFieldNames().get(1));
+        assertEquals("UserEmail", nestedRow.getFieldNames().get(2));
+    }
+
+    @Test
+    void testFieldNameCasingWithLowercaseKeywords() {
+        // Type keywords in lowercase should not affect field name casing
+        DataType dataType = SchemaParser.parseSchema("data row<phoneNumber STRING, Email STRING>");
+        RowType rowType = (RowType) dataType.getLogicalType();
+
+        assertEquals("data", rowType.getFieldNames().get(0));
+        RowType nestedRow = (RowType) rowType.getTypeAt(0);
+
+        assertEquals(2, nestedRow.getFieldCount());
+        assertEquals("phoneNumber", nestedRow.getFieldNames().get(0));
+        assertEquals("Email", nestedRow.getFieldNames().get(1));
+    }
+
+    @Test
+    void testFieldNameCasingInArrayOfRows() {
+        // Field names in ARRAY<ROW<...>> should preserve casing
+        DataType dataType = SchemaParser.parseSchema("items array<row<itemId INT, itemName STRING>>");
+        RowType rowType = (RowType) dataType.getLogicalType();
+
+        assertEquals("items", rowType.getFieldNames().get(0));
+        ArrayType arrayType = (ArrayType) rowType.getTypeAt(0);
+        RowType elementRow = (RowType) arrayType.getElementType();
+
+        assertEquals(2, elementRow.getFieldCount());
+        assertEquals("itemId", elementRow.getFieldNames().get(0));
+        assertEquals("itemName", elementRow.getFieldNames().get(1));
+    }
+
+    @Test
+    void testFieldNameCasingInMapOfRows() {
+        // Field names in MAP<K, ROW<...>> should preserve casing
+        DataType dataType = SchemaParser.parseSchema("metadata map<string, row<createdBy STRING, updatedBy STRING>>");
+        RowType rowType = (RowType) dataType.getLogicalType();
+
+        assertEquals("metadata", rowType.getFieldNames().get(0));
+        MapType mapType = (MapType) rowType.getTypeAt(0);
+        RowType valueRow = (RowType) mapType.getValueType();
+
+        assertEquals(2, valueRow.getFieldCount());
+        assertEquals("createdBy", valueRow.getFieldNames().get(0));
+        assertEquals("updatedBy", valueRow.getFieldNames().get(1));
+    }
+
+    @Test
     void testWhitespaceHandling() {
         DataType dataType = SchemaParser.parseSchema("  id   INT  ,  name   STRING  ");
         RowType rowType = (RowType) dataType.getLogicalType();

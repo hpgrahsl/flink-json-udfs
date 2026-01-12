@@ -275,7 +275,9 @@ public class SchemaParser {
         if (!typeString.toUpperCase().startsWith("ARRAY<")) {
             throw new IllegalArgumentException("Invalid ARRAY type format: " + typeString);
         }
-        String content = extractBracketedContent(typeString, "ARRAY".length());
+        // Find the actual position of '<' to preserve original casing
+        int bracketPos = typeString.indexOf('<');
+        String content = extractBracketedContent(typeString, bracketPos);
         if (content == null) {
             throw new IllegalArgumentException("Invalid ARRAY type format: " + typeString);
         }
@@ -299,7 +301,9 @@ public class SchemaParser {
             throw new IllegalArgumentException("Invalid MAP type format: " + typeString);
         }
 
-        String content = extractBracketedContent(typeString, "MAP".length());
+        // Find the actual position of '<' to preserve original casing
+        int bracketPos = typeString.indexOf('<');
+        String content = extractBracketedContent(typeString, bracketPos);
         if (content == null) {
             throw new IllegalArgumentException("Invalid MAP type format: " + typeString);
         }
@@ -327,15 +331,13 @@ public class SchemaParser {
      */
     static DataType parseRowType(String typeString) {
         // extract content from ROW<...>
-        String upper = typeString.toUpperCase();
-        int offset;
-        if (upper.startsWith("ROW<")) {
-            offset = "ROW".length();
-        } else {
+        if (!typeString.toUpperCase().startsWith("ROW<")) {
             throw new IllegalArgumentException("invalid ROW type format: " + typeString);
         }
 
-        String content = extractBracketedContent(typeString, offset);
+        // Find the actual position of '<' to preserve original casing of field names
+        int bracketPos = typeString.indexOf('<');
+        String content = extractBracketedContent(typeString, bracketPos);
         if (content == null) {
             throw new IllegalArgumentException("invalid ROW type format: " + typeString);
         }

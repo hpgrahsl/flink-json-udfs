@@ -561,4 +561,64 @@ public class FromJsonUdfIntegrationTest {
             Row.of(3, 300)
         ));
     }
+
+    @Test
+    public void testFieldNameCasingPreservation() throws Exception {
+        // Test that field names with mixed casing are preserved correctly
+        // This is critical since Flink treats ROW field names as case-sensitive
+        var inputTable = T_ENV.fromValues(
+            DataTypes.ROW(DataTypes.FIELD("json", DataTypes.STRING())),
+            Row.of("{\"userId\": 123, \"userName\": \"Alice\", \"UserEmail\": \"alice@example.com\"}")
+        );
+
+        T_ENV.createTemporaryView("input_table", inputTable);
+
+        // Use mixed-case field names in schema
+        var outputTable = T_ENV.sqlQuery(
+            "SELECT FROM_JSON(json, 'ROW<userId INT, userName STRING, UserEmail STRING>') AS udf_result FROM input_table"
+        );
+        var outputStream = T_ENV.toDataStream(outputTable);
+
+        List<Row> results = new ArrayList<>();
+        try (CloseableIterator<Row> rowIter = outputStream.executeAndCollect()) {
+            rowIter.forEachRemaining(r -> results.add(r.getFieldAs("udf_result")));
+        }
+
+        assertEquals(1, results.size());
+        Row result = results.get(0);
+
+        // Verify the values are correctly mapped
+        assertEquals(123, result.getField(0));
+        assertEquals("Alice", result.getField(1));
+        assertEquals("alice@example.com", result.getField(2));
+    }
+
+    @Test
+    public void testNestedRowFieldNameCasing() throws Exception {
+        // Test field name casing in nested ROW types
+        var inputTable = T_ENV.fromValues(
+            DataTypes.ROW(DataTypes.FIELD("json", DataTypes.STRING())),
+            Row.of("{\"user\": {\"userId\": 456, \"userName\": \"Bob\"}}")
+        );
+
+        T_ENV.createTemporaryView("input_table", inputTable);
+
+        var outputTable = T_ENV.sqlQuery(
+            "SELECT FROM_JSON(json, 'ROW<user ROW<userId INT, userName STRING>>') AS udf_result FROM input_table"
+        );
+        var outputStream = T_ENV.toDataStream(outputTable);
+
+        List<Row> results = new ArrayList<>();
+        try (CloseableIterator<Row> rowIter = outputStream.executeAndCollect()) {
+            rowIter.forEachRemaining(r -> results.add(r.getFieldAs("udf_result")));
+        }
+
+        assertEquals(1, results.size());
+        Row result = results.get(0);
+        Row nestedRow = result.getFieldAs(0);
+
+        assertNotNull(nestedRow);
+        assertEquals(456, nestedRow.getField(0));
+        assertEquals("Bob", nestedRow.getField(1));
+    }
 }
