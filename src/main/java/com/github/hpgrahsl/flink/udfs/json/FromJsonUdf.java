@@ -562,14 +562,15 @@ public class FromJsonUdf extends ScalarFunction {
                     }
 
                     String schemaString = schemaStringOpt.get();
-                    String schema = schemaString.trim().toUpperCase();
+                    String schemaUpper = schemaString.trim().toUpperCase();
                     // schema must be one of ROW<...> or MAP<...> or ARRAY<...>
-                    if (!schema.startsWith("ROW<") && !schema.startsWith("MAP<") && !schema.startsWith("ARRAY<")) {
+                    if (!schemaUpper.startsWith("ROW<") && !schemaUpper.startsWith("MAP<") && !schemaUpper.startsWith("ARRAY<")) {
                         throw new IllegalArgumentException(
                                 "schema parameter must be either ROW<...>, MAP<...>, or ARRAY<...>. - got: "
                                         + schemaString);
                     }
-                    DataType outputType = SchemaParser.parseType(schema);
+                    // Pass the original schemaString to preserve field name casing
+                    DataType outputType = SchemaParser.parseType(schemaString);
                     return Optional.of(outputType);
                 })
                 .build();

@@ -33,6 +33,7 @@ import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.table.api.DataTypes;
 import org.apache.flink.table.api.EnvironmentSettings;
 import org.apache.flink.table.api.bridge.java.StreamTableEnvironment;
+import org.apache.flink.table.types.logical.RowType;
 import org.apache.flink.test.junit5.InjectMiniCluster;
 import org.apache.flink.test.junit5.MiniClusterExtension;
 import org.apache.flink.types.Row;
@@ -560,5 +561,244 @@ public class FromJsonUdfIntegrationTest {
             Row.of(2, 200),
             Row.of(3, 300)
         ));
+    }
+
+    @Test
+    public void testFieldNameCasingPreservation() throws Exception {
+        // Test that field names with mixed casing are preserved correctly
+        // This is critical since Flink treats ROW field names as case-sensitive
+        var inputTable = T_ENV.fromValues(
+            DataTypes.ROW(DataTypes.FIELD("json", DataTypes.STRING())),
+            Row.of("{\"userId\": 123, \"userName\": \"Alice\", \"UserEmail\": \"alice@example.com\"}")
+        );
+
+        T_ENV.createTemporaryView("input_table", inputTable);
+
+        // Use mixed-case field names in schema
+        var outputTable = T_ENV.sqlQuery(
+            "SELECT FROM_JSON(json, 'ROW<userId INT, userName STRING, UserEmail STRING>') AS udf_result FROM input_table"
+        );
+        var outputStream = T_ENV.toDataStream(outputTable);
+
+        List<Row> results = new ArrayList<>();
+        try (CloseableIterator<Row> rowIter = outputStream.executeAndCollect()) {
+            rowIter.forEachRemaining(r -> results.add(r.getFieldAs("udf_result")));
+        }
+
+        assertEquals(1, results.size());
+        Row result = results.get(0);
+
+        // Verify the values are correctly mapped
+        assertEquals(123, result.getField(0));
+        assertEquals("Alice", result.getField(1));
+        assertEquals("alice@example.com", result.getField(2));
+    }
+
+    @Test
+    public void testNestedRowFieldNameCasing() throws Exception {
+        // Test field name casing in nested ROW types
+        var inputTable = T_ENV.fromValues(
+            DataTypes.ROW(DataTypes.FIELD("json", DataTypes.STRING())),
+            Row.of("{\"user\": {\"userId\": 456, \"userName\": \"Bob\"}}")
+        );
+
+        T_ENV.createTemporaryView("input_table", inputTable);
+
+        var outputTable = T_ENV.sqlQuery(
+            "SELECT FROM_JSON(json, 'ROW<user ROW<userId INT, userName STRING>>') AS udf_result FROM input_table"
+        );
+        var outputStream = T_ENV.toDataStream(outputTable);
+
+        List<Row> results = new ArrayList<>();
+        try (CloseableIterator<Row> rowIter = outputStream.executeAndCollect()) {
+            rowIter.forEachRemaining(r -> results.add(r.getFieldAs("udf_result")));
+        }
+
+        assertEquals(1, results.size());
+        Row result = results.get(0);
+        Row nestedRow = result.getFieldAs(0);
+
+        assertNotNull(nestedRow);
+        assertEquals(456, nestedRow.getField(0));
+        assertEquals("Bob", nestedRow.getField(1));
+    }
+
+    @Test
+    public void testBacktickedFieldNamesWithReservedKeywords() throws Exception {
+        // Test field names that are SQL reserved keywords using backticks
+        var inputTable = T_ENV.fromValues(
+            DataTypes.ROW(DataTypes.FIELD("json", DataTypes.STRING())),
+            Row.of("{\"count\": 100, \"order\": 5, \"table\": \"users\", \"select\": 42}")
+        );
+
+        T_ENV.createTemporaryView("input_table", inputTable);
+
+        // Use backticks for reserved keyword field names
+        var outputTable = T_ENV.sqlQuery(
+            "SELECT FROM_JSON(json, 'ROW<`count` INT, `order` INT, `table` STRING, `select` INT>') AS udf_result FROM input_table"
+        );
+        var outputStream = T_ENV.toDataStream(outputTable);
+
+        List<Row> results = new ArrayList<>();
+        try (CloseableIterator<Row> rowIter = outputStream.executeAndCollect()) {
+            rowIter.forEachRemaining(r -> results.add(r.getFieldAs("udf_result")));
+        }
+
+        assertEquals(1, results.size());
+        Row result = results.get(0);
+
+        // Verify the values are correctly mapped
+        assertEquals(100, result.getField(0));
+        assertEquals(5, result.getField(1));
+        assertEquals("users", result.getField(2));
+        assertEquals(42, result.getField(3));
+    }
+
+    @Test
+    public void testBacktickedFieldNamesWithSpecialCharacters() throws Exception {
+        // Test field names with special characters that require backticks
+        var inputTable = T_ENV.fromValues(
+            DataTypes.ROW(DataTypes.FIELD("json", DataTypes.STRING())),
+            Row.of("{\"user-id\": 123, \"user.name\": \"Alice\", \"user email\": \"alice@example.com\"}")
+        );
+
+        T_ENV.createTemporaryView("input_table", inputTable);
+
+        var outputTable = T_ENV.sqlQuery(
+            "SELECT FROM_JSON(json, 'ROW<`user-id` INT, `user.name` STRING, `user email` STRING>') AS udf_result FROM input_table"
+        );
+        var outputStream = T_ENV.toDataStream(outputTable);
+
+        List<Row> results = new ArrayList<>();
+        try (CloseableIterator<Row> rowIter = outputStream.executeAndCollect()) {
+            rowIter.forEachRemaining(r -> results.add(r.getFieldAs("udf_result")));
+        }
+
+        assertEquals(1, results.size());
+        Row result = results.get(0);
+
+        assertEquals(123, result.getField(0));
+        assertEquals("Alice", result.getField(1));
+        assertEquals("alice@example.com", result.getField(2));
+    }
+
+    @Test
+    public void testNotNullConstraintInSchema() throws Exception {
+        // Test NOT NULL constraint on field types
+        var inputTable = T_ENV.fromValues(
+            DataTypes.ROW(DataTypes.FIELD("json", DataTypes.STRING())),
+            Row.of("{\"id\": 100, \"name\": \"Bob\", \"email\": \"bob@example.com\"}")
+        );
+
+        T_ENV.createTemporaryView("input_table", inputTable);
+
+        // Schema with NOT NULL constraints
+        var outputTable = T_ENV.sqlQuery(
+            "SELECT FROM_JSON(json, 'ROW<id INT NOT NULL, name STRING NOT NULL, email STRING>') AS udf_result FROM input_table"
+        );
+        var outputStream = T_ENV.toDataStream(outputTable);
+
+        List<Row> results = new ArrayList<>();
+        try (CloseableIterator<Row> rowIter = outputStream.executeAndCollect()) {
+            rowIter.forEachRemaining(r -> results.add(r.getFieldAs("udf_result")));
+        }
+
+        assertEquals(1, results.size());
+        Row result = results.get(0);
+
+        // Verify values are correctly mapped
+        assertEquals(100, result.getField(0));
+        assertEquals("Bob", result.getField(1));
+        assertEquals("bob@example.com", result.getField(2));
+
+        // Verify the DataType has correct nullability
+        var dataType = outputTable.getResolvedSchema().getColumnDataTypes().get(0);
+        RowType rowType = (RowType) dataType.getLogicalType();
+
+        // id INT NOT NULL - should be non-nullable
+        assertFalse(rowType.getTypeAt(0).isNullable());
+
+        // name STRING NOT NULL - should be non-nullable
+        assertFalse(rowType.getTypeAt(1).isNullable());
+
+        // email STRING - should be nullable (default)
+        assertTrue(rowType.getTypeAt(2).isNullable());
+    }
+
+    @Test
+    public void testNotNullWithComplexTypes() throws Exception {
+        // Test NOT NULL with nested ROW types
+        var inputTable = T_ENV.fromValues(
+            DataTypes.ROW(DataTypes.FIELD("json", DataTypes.STRING())),
+            Row.of("{\"user\": {\"id\": 42, \"name\": \"Charlie\"}}")
+        );
+
+        T_ENV.createTemporaryView("input_table", inputTable);
+
+        var outputTable = T_ENV.sqlQuery(
+            "SELECT FROM_JSON(json, 'ROW<user ROW<id INT NOT NULL, name STRING NOT NULL> NOT NULL>') AS udf_result FROM input_table"
+        );
+        var outputStream = T_ENV.toDataStream(outputTable);
+
+        List<Row> results = new ArrayList<>();
+        try (CloseableIterator<Row> rowIter = outputStream.executeAndCollect()) {
+            rowIter.forEachRemaining(r -> results.add(r.getFieldAs("udf_result")));
+        }
+
+        assertEquals(1, results.size());
+        Row result = results.get(0);
+        Row nestedRow = result.getFieldAs(0);
+
+        assertNotNull(nestedRow);
+        assertEquals(42, nestedRow.getField(0));
+        assertEquals("Charlie", nestedRow.getField(1));
+
+        // Verify nullability constraints
+        var dataType = outputTable.getResolvedSchema().getColumnDataTypes().get(0);
+        RowType rowType = (RowType) dataType.getLogicalType();
+
+        // user ROW<...> NOT NULL - the row itself should be non-nullable
+        assertFalse(rowType.getTypeAt(0).isNullable());
+
+        // Nested fields should also be non-nullable
+        RowType nestedRowType = (RowType) rowType.getTypeAt(0);
+        assertFalse(nestedRowType.getTypeAt(0).isNullable()); // id INT NOT NULL
+        assertFalse(nestedRowType.getTypeAt(1).isNullable()); // name STRING NOT NULL
+    }
+
+    @Test
+    public void testNotNullCombinedWithBackticks() throws Exception {
+        // Test NOT NULL combined with backticked field names for reserved keywords
+        var inputTable = T_ENV.fromValues(
+            DataTypes.ROW(DataTypes.FIELD("json", DataTypes.STRING())),
+            Row.of("{\"count\": 50, \"order\": 10, \"table\": \"products\"}")
+        );
+
+        T_ENV.createTemporaryView("input_table", inputTable);
+
+        var outputTable = T_ENV.sqlQuery(
+            "SELECT FROM_JSON(json, 'ROW<`count` INT NOT NULL, `order` INT NOT NULL, `table` STRING NOT NULL>') AS udf_result FROM input_table"
+        );
+        var outputStream = T_ENV.toDataStream(outputTable);
+
+        List<Row> results = new ArrayList<>();
+        try (CloseableIterator<Row> rowIter = outputStream.executeAndCollect()) {
+            rowIter.forEachRemaining(r -> results.add(r.getFieldAs("udf_result")));
+        }
+
+        assertEquals(1, results.size());
+        Row result = results.get(0);
+
+        assertEquals(50, result.getField(0));
+        assertEquals(10, result.getField(1));
+        assertEquals("products", result.getField(2));
+
+        // Verify all fields are non-nullable
+        var dataType = outputTable.getResolvedSchema().getColumnDataTypes().get(0);
+        RowType rowType = (RowType) dataType.getLogicalType();
+
+        assertFalse(rowType.getTypeAt(0).isNullable());
+        assertFalse(rowType.getTypeAt(1).isNullable());
+        assertFalse(rowType.getTypeAt(2).isNullable());
     }
 }

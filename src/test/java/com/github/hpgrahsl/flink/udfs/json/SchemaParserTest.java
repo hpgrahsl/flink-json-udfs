@@ -146,6 +146,99 @@ class SchemaParserTest {
     }
 
     @Test
+    void testIntegerTypeAlias() {
+        // INTEGER should be an alias for INT
+        DataType dataTypeInt = SchemaParser.parseSchema("id INT");
+        DataType dataTypeInteger = SchemaParser.parseSchema("id INTEGER");
+        DataType dataTypeMixed = SchemaParser.parseSchema("count INTEGER, age INT");
+
+        RowType rowTypeInt = (RowType) dataTypeInt.getLogicalType();
+        RowType rowTypeInteger = (RowType) dataTypeInteger.getLogicalType();
+        RowType rowTypeMixed = (RowType) dataTypeMixed.getLogicalType();
+
+        // Both should produce IntType
+        assertTrue(rowTypeInt.getTypeAt(0) instanceof IntType);
+        assertTrue(rowTypeInteger.getTypeAt(0) instanceof IntType);
+
+        // Mixed usage should work
+        assertEquals(2, rowTypeMixed.getFieldCount());
+        assertTrue(rowTypeMixed.getTypeAt(0) instanceof IntType);
+        assertTrue(rowTypeMixed.getTypeAt(1) instanceof IntType);
+    }
+
+    @Test
+    void testFieldNameCasingPreservation() {
+        // Field names should be preserved exactly as written, including casing
+        DataType dataType = SchemaParser.parseSchema("phone STRING, Phone INT, PHONE BIGINT");
+        RowType rowType = (RowType) dataType.getLogicalType();
+
+        assertEquals(3, rowType.getFieldCount());
+        // Verify exact field name casing is preserved
+        assertEquals("phone", rowType.getFieldNames().get(0));
+        assertEquals("Phone", rowType.getFieldNames().get(1));
+        assertEquals("PHONE", rowType.getFieldNames().get(2));
+    }
+
+    @Test
+    void testFieldNameCasingInNestedRow() {
+        // Field names in nested ROW types should preserve casing
+        DataType dataType = SchemaParser.parseSchema("user ROW<userId INT, userName STRING, UserEmail STRING>");
+        RowType rowType = (RowType) dataType.getLogicalType();
+
+        assertEquals("user", rowType.getFieldNames().get(0));
+        RowType nestedRow = (RowType) rowType.getTypeAt(0);
+
+        assertEquals(3, nestedRow.getFieldCount());
+        assertEquals("userId", nestedRow.getFieldNames().get(0));
+        assertEquals("userName", nestedRow.getFieldNames().get(1));
+        assertEquals("UserEmail", nestedRow.getFieldNames().get(2));
+    }
+
+    @Test
+    void testFieldNameCasingWithLowercaseKeywords() {
+        // Type keywords in lowercase should not affect field name casing
+        DataType dataType = SchemaParser.parseSchema("data row<phoneNumber STRING, Email STRING>");
+        RowType rowType = (RowType) dataType.getLogicalType();
+
+        assertEquals("data", rowType.getFieldNames().get(0));
+        RowType nestedRow = (RowType) rowType.getTypeAt(0);
+
+        assertEquals(2, nestedRow.getFieldCount());
+        assertEquals("phoneNumber", nestedRow.getFieldNames().get(0));
+        assertEquals("Email", nestedRow.getFieldNames().get(1));
+    }
+
+    @Test
+    void testFieldNameCasingInArrayOfRows() {
+        // Field names in ARRAY<ROW<...>> should preserve casing
+        DataType dataType = SchemaParser.parseSchema("items array<row<itemId INT, itemName STRING>>");
+        RowType rowType = (RowType) dataType.getLogicalType();
+
+        assertEquals("items", rowType.getFieldNames().get(0));
+        ArrayType arrayType = (ArrayType) rowType.getTypeAt(0);
+        RowType elementRow = (RowType) arrayType.getElementType();
+
+        assertEquals(2, elementRow.getFieldCount());
+        assertEquals("itemId", elementRow.getFieldNames().get(0));
+        assertEquals("itemName", elementRow.getFieldNames().get(1));
+    }
+
+    @Test
+    void testFieldNameCasingInMapOfRows() {
+        // Field names in MAP<K, ROW<...>> should preserve casing
+        DataType dataType = SchemaParser.parseSchema("metadata map<string, row<createdBy STRING, updatedBy STRING>>");
+        RowType rowType = (RowType) dataType.getLogicalType();
+
+        assertEquals("metadata", rowType.getFieldNames().get(0));
+        MapType mapType = (MapType) rowType.getTypeAt(0);
+        RowType valueRow = (RowType) mapType.getValueType();
+
+        assertEquals(2, valueRow.getFieldCount());
+        assertEquals("createdBy", valueRow.getFieldNames().get(0));
+        assertEquals("updatedBy", valueRow.getFieldNames().get(1));
+    }
+
+    @Test
     void testWhitespaceHandling() {
         DataType dataType = SchemaParser.parseSchema("  id   INT  ,  name   STRING  ");
         RowType rowType = (RowType) dataType.getLogicalType();
@@ -153,6 +246,354 @@ class SchemaParserTest {
         assertEquals(2, rowType.getFieldCount());
         assertEquals("id", rowType.getFieldNames().get(0));
         assertEquals("name", rowType.getFieldNames().get(1));
+    }
+
+    @Test
+    void testBackticksForNonKeywords() {
+        // Backticks are optional for non-keywords but should work
+        DataType dataType = SchemaParser.parseSchema("`id` INT, `name` STRING, `age` BIGINT");
+        RowType rowType = (RowType) dataType.getLogicalType();
+
+        assertEquals(3, rowType.getFieldCount());
+        assertEquals("id", rowType.getFieldNames().get(0));
+        assertEquals("name", rowType.getFieldNames().get(1));
+        assertEquals("age", rowType.getFieldNames().get(2));
+        assertTrue(rowType.getTypeAt(0) instanceof IntType);
+        assertTrue(rowType.getTypeAt(1) instanceof VarCharType);
+        assertTrue(rowType.getTypeAt(2) instanceof BigIntType);
+    }
+
+    @Test
+    void testBackticksForReservedKeywords() {
+        // Reserved keywords like count, catalog, table, order, select must use backticks
+        DataType dataType = SchemaParser.parseSchema("`count` INT, `catalog` STRING, `table` STRING, `order` BIGINT, `select` DOUBLE");
+        RowType rowType = (RowType) dataType.getLogicalType();
+
+        assertEquals(5, rowType.getFieldCount());
+        assertEquals("count", rowType.getFieldNames().get(0));
+        assertEquals("catalog", rowType.getFieldNames().get(1));
+        assertEquals("table", rowType.getFieldNames().get(2));
+        assertEquals("order", rowType.getFieldNames().get(3));
+        assertEquals("select", rowType.getFieldNames().get(4));
+        assertTrue(rowType.getTypeAt(0) instanceof IntType);
+        assertTrue(rowType.getTypeAt(1) instanceof VarCharType);
+        assertTrue(rowType.getTypeAt(2) instanceof VarCharType);
+        assertTrue(rowType.getTypeAt(3) instanceof BigIntType);
+        assertTrue(rowType.getTypeAt(4) instanceof DoubleType);
+    }
+
+    @Test
+    void testMixedBackticksAndStandard() {
+        // Mix of backticked and standard field names
+        DataType dataType = SchemaParser.parseSchema("id INT, `count` BIGINT, name STRING, `order` INT");
+        RowType rowType = (RowType) dataType.getLogicalType();
+
+        assertEquals(4, rowType.getFieldCount());
+        assertEquals("id", rowType.getFieldNames().get(0));
+        assertEquals("count", rowType.getFieldNames().get(1));
+        assertEquals("name", rowType.getFieldNames().get(2));
+        assertEquals("order", rowType.getFieldNames().get(3));
+    }
+
+    @Test
+    void testBackticksWithSpecialCharacters() {
+        // Backticks allow special characters in field names
+        DataType dataType = SchemaParser.parseSchema("`field-name` INT, `field.name` STRING, `field name` BIGINT");
+        RowType rowType = (RowType) dataType.getLogicalType();
+
+        assertEquals(3, rowType.getFieldCount());
+        assertEquals("field-name", rowType.getFieldNames().get(0));
+        assertEquals("field.name", rowType.getFieldNames().get(1));
+        assertEquals("field name", rowType.getFieldNames().get(2));
+    }
+
+    @Test
+    void testBackticksPreserveCasing() {
+        // Backticks should preserve field name casing
+        DataType dataType = SchemaParser.parseSchema("`userId` INT, `userName` STRING, `UserEmail` STRING");
+        RowType rowType = (RowType) dataType.getLogicalType();
+
+        assertEquals(3, rowType.getFieldCount());
+        assertEquals("userId", rowType.getFieldNames().get(0));
+        assertEquals("userName", rowType.getFieldNames().get(1));
+        assertEquals("UserEmail", rowType.getFieldNames().get(2));
+    }
+
+    @Test
+    void testBackticksInNestedRow() {
+        // Backticks in nested ROW types
+        DataType dataType = SchemaParser.parseSchema("`user` ROW<`user-id` INT, `user-name` STRING, `count` BIGINT>");
+        RowType rowType = (RowType) dataType.getLogicalType();
+
+        assertEquals("user", rowType.getFieldNames().get(0));
+        RowType nestedRow = (RowType) rowType.getTypeAt(0);
+
+        assertEquals(3, nestedRow.getFieldCount());
+        assertEquals("user-id", nestedRow.getFieldNames().get(0));
+        assertEquals("user-name", nestedRow.getFieldNames().get(1));
+        assertEquals("count", nestedRow.getFieldNames().get(2));
+    }
+
+    @Test
+    void testBackticksInArrayOfRows() {
+        // Backticks in ARRAY<ROW<...>>
+        DataType dataType = SchemaParser.parseSchema("`items` ARRAY<ROW<`item-id` INT, `order` STRING>>");
+        RowType rowType = (RowType) dataType.getLogicalType();
+
+        assertEquals("items", rowType.getFieldNames().get(0));
+        ArrayType arrayType = (ArrayType) rowType.getTypeAt(0);
+        RowType elementRow = (RowType) arrayType.getElementType();
+
+        assertEquals(2, elementRow.getFieldCount());
+        assertEquals("item-id", elementRow.getFieldNames().get(0));
+        assertEquals("order", elementRow.getFieldNames().get(1));
+    }
+
+    @Test
+    void testBackticksInMapOfRows() {
+        // Backticks in MAP<K, ROW<...>>
+        DataType dataType = SchemaParser.parseSchema("`metadata` MAP<STRING, ROW<`created-by` STRING, `table` STRING>>");
+        RowType rowType = (RowType) dataType.getLogicalType();
+
+        assertEquals("metadata", rowType.getFieldNames().get(0));
+        MapType mapType = (MapType) rowType.getTypeAt(0);
+        RowType valueRow = (RowType) mapType.getValueType();
+
+        assertEquals(2, valueRow.getFieldCount());
+        assertEquals("created-by", valueRow.getFieldNames().get(0));
+        assertEquals("table", valueRow.getFieldNames().get(1));
+    }
+
+    @Test
+    void testBackticksWithMoreReservedKeywords() {
+        // Test additional reserved keywords: database, index, key, primary, foreign, constraint
+        DataType dataType = SchemaParser.parseSchema(
+            "`database` STRING, `index` INT, `key` STRING, `primary` BOOLEAN, `foreign` BIGINT, `constraint` STRING"
+        );
+        RowType rowType = (RowType) dataType.getLogicalType();
+
+        assertEquals(6, rowType.getFieldCount());
+        assertEquals("database", rowType.getFieldNames().get(0));
+        assertEquals("index", rowType.getFieldNames().get(1));
+        assertEquals("key", rowType.getFieldNames().get(2));
+        assertEquals("primary", rowType.getFieldNames().get(3));
+        assertEquals("foreign", rowType.getFieldNames().get(4));
+        assertEquals("constraint", rowType.getFieldNames().get(5));
+    }
+
+    @Test
+    void testBackticksInDeeplyNestedStructure() {
+        // Complex nested structure with backticks throughout
+        DataType dataType = SchemaParser.parseSchema(
+            "`user` ROW<`user-id` INT, `profile` ROW<`user-name` STRING, `count` INT, `order` BIGINT>>"
+        );
+        RowType rowType = (RowType) dataType.getLogicalType();
+
+        assertEquals("user", rowType.getFieldNames().get(0));
+        RowType userRow = (RowType) rowType.getTypeAt(0);
+
+        assertEquals(2, userRow.getFieldCount());
+        assertEquals("user-id", userRow.getFieldNames().get(0));
+        assertEquals("profile", userRow.getFieldNames().get(1));
+
+        RowType profileRow = (RowType) userRow.getTypeAt(1);
+        assertEquals(3, profileRow.getFieldCount());
+        assertEquals("user-name", profileRow.getFieldNames().get(0));
+        assertEquals("count", profileRow.getFieldNames().get(1));
+        assertEquals("order", profileRow.getFieldNames().get(2));
+    }
+
+    @Test
+    void testNotNullForSimpleTypes() {
+        // Test NOT NULL constraint on simple types
+        DataType dataType = SchemaParser.parseSchema("id INT NOT NULL, name STRING NOT NULL, age BIGINT");
+        RowType rowType = (RowType) dataType.getLogicalType();
+
+        assertEquals(3, rowType.getFieldCount());
+
+        // id INT NOT NULL - should be non-nullable
+        assertTrue(rowType.getTypeAt(0) instanceof IntType);
+        assertFalse(rowType.getTypeAt(0).isNullable());
+
+        // name STRING NOT NULL - should be non-nullable
+        assertTrue(rowType.getTypeAt(1) instanceof VarCharType);
+        assertFalse(rowType.getTypeAt(1).isNullable());
+
+        // age BIGINT - should be nullable (default)
+        assertTrue(rowType.getTypeAt(2) instanceof BigIntType);
+        assertTrue(rowType.getTypeAt(2).isNullable());
+    }
+
+    @Test
+    void testNotNullWithParameterizedTypes() {
+        // Test NOT NULL with parameterized types
+        DataType dataType = SchemaParser.parseSchema(
+            "name VARCHAR(50) NOT NULL, code CHAR(5) NOT NULL, price DECIMAL(10,2) NOT NULL"
+        );
+        RowType rowType = (RowType) dataType.getLogicalType();
+
+        assertEquals(3, rowType.getFieldCount());
+
+        VarCharType nameType = (VarCharType) rowType.getTypeAt(0);
+        assertEquals(50, nameType.getLength());
+        assertFalse(nameType.isNullable());
+
+        CharType codeType = (CharType) rowType.getTypeAt(1);
+        assertEquals(5, codeType.getLength());
+        assertFalse(codeType.isNullable());
+
+        DecimalType priceType = (DecimalType) rowType.getTypeAt(2);
+        assertEquals(10, priceType.getPrecision());
+        assertEquals(2, priceType.getScale());
+        assertFalse(priceType.isNullable());
+    }
+
+    @Test
+    void testNotNullWithComplexTypes() {
+        // Test NOT NULL on ARRAY, ROW, and MAP types themselves
+        DataType dataType = SchemaParser.parseSchema(
+            "tags ARRAY<STRING> NOT NULL, user ROW<id INT, name STRING> NOT NULL, meta MAP<STRING, INT> NOT NULL"
+        );
+        RowType rowType = (RowType) dataType.getLogicalType();
+
+        assertEquals(3, rowType.getFieldCount());
+
+        // tags ARRAY - the array itself is non-nullable
+        assertTrue(rowType.getTypeAt(0) instanceof ArrayType);
+        assertFalse(rowType.getTypeAt(0).isNullable());
+
+        // user ROW - the row itself is non-nullable
+        assertTrue(rowType.getTypeAt(1) instanceof RowType);
+        assertFalse(rowType.getTypeAt(1).isNullable());
+
+        // meta MAP - the map itself is non-nullable
+        assertTrue(rowType.getTypeAt(2) instanceof MapType);
+        assertFalse(rowType.getTypeAt(2).isNullable());
+    }
+
+    @Test
+    void testNotNullInNestedRow() {
+        // Test NOT NULL inside nested ROW fields
+        DataType dataType = SchemaParser.parseSchema(
+            "user ROW<id INT NOT NULL, name STRING NOT NULL, email STRING>"
+        );
+        RowType rowType = (RowType) dataType.getLogicalType();
+
+        assertEquals("user", rowType.getFieldNames().get(0));
+        RowType nestedRow = (RowType) rowType.getTypeAt(0);
+
+        assertEquals(3, nestedRow.getFieldCount());
+
+        // id INT NOT NULL
+        assertTrue(nestedRow.getTypeAt(0) instanceof IntType);
+        assertFalse(nestedRow.getTypeAt(0).isNullable());
+
+        // name STRING NOT NULL
+        assertTrue(nestedRow.getTypeAt(1) instanceof VarCharType);
+        assertFalse(nestedRow.getTypeAt(1).isNullable());
+
+        // email STRING (nullable)
+        assertTrue(nestedRow.getTypeAt(2) instanceof VarCharType);
+        assertTrue(nestedRow.getTypeAt(2).isNullable());
+    }
+
+    @Test
+    void testNotNullInArrayElementType() {
+        // Test NOT NULL on array element types
+        DataType dataType = SchemaParser.parseSchema("ids ARRAY<INT NOT NULL>");
+        RowType rowType = (RowType) dataType.getLogicalType();
+
+        assertEquals("ids", rowType.getFieldNames().get(0));
+        ArrayType arrayType = (ArrayType) rowType.getTypeAt(0);
+
+        // Array itself is nullable
+        assertTrue(arrayType.isNullable());
+
+        // But elements are non-nullable
+        assertTrue(arrayType.getElementType() instanceof IntType);
+        assertFalse(arrayType.getElementType().isNullable());
+    }
+
+    @Test
+    void testNotNullInMapValueType() {
+        // Test NOT NULL on map value types
+        DataType dataType = SchemaParser.parseSchema("counters MAP<STRING, INT NOT NULL>");
+        RowType rowType = (RowType) dataType.getLogicalType();
+
+        assertEquals("counters", rowType.getFieldNames().get(0));
+        MapType mapType = (MapType) rowType.getTypeAt(0);
+
+        // Map itself is nullable
+        assertTrue(mapType.isNullable());
+
+        // Value type is non-nullable
+        assertTrue(mapType.getValueType() instanceof IntType);
+        assertFalse(mapType.getValueType().isNullable());
+
+        // Key type is nullable (default)
+        assertTrue(mapType.getKeyType() instanceof VarCharType);
+        assertTrue(mapType.getKeyType().isNullable());
+    }
+
+    @Test
+    void testNotNullCombinedWithBackticks() {
+        // Test NOT NULL combined with backticked field names
+        DataType dataType = SchemaParser.parseSchema(
+            "`count` INT NOT NULL, `order` BIGINT NOT NULL, `table` STRING NOT NULL"
+        );
+        RowType rowType = (RowType) dataType.getLogicalType();
+
+        assertEquals(3, rowType.getFieldCount());
+        assertEquals("count", rowType.getFieldNames().get(0));
+        assertEquals("order", rowType.getFieldNames().get(1));
+        assertEquals("table", rowType.getFieldNames().get(2));
+
+        assertFalse(rowType.getTypeAt(0).isNullable());
+        assertFalse(rowType.getTypeAt(1).isNullable());
+        assertFalse(rowType.getTypeAt(2).isNullable());
+    }
+
+    @Test
+    void testNotNullInComplexNestedStructure() {
+        // Complex nested structure with NOT NULL at various levels
+        DataType dataType = SchemaParser.parseSchema(
+            "user ROW<id INT NOT NULL, profile ROW<name STRING NOT NULL, tags ARRAY<STRING NOT NULL> NOT NULL> NOT NULL>"
+        );
+        RowType rowType = (RowType) dataType.getLogicalType();
+
+        RowType userRow = (RowType) rowType.getTypeAt(0);
+        assertEquals(2, userRow.getFieldCount());
+
+        // id INT NOT NULL
+        assertFalse(userRow.getTypeAt(0).isNullable());
+
+        // profile ROW<...> NOT NULL
+        RowType profileRow = (RowType) userRow.getTypeAt(1);
+        assertFalse(profileRow.isNullable());
+
+        // name STRING NOT NULL
+        assertFalse(profileRow.getTypeAt(0).isNullable());
+
+        // tags ARRAY<STRING NOT NULL> NOT NULL
+        ArrayType tagsArray = (ArrayType) profileRow.getTypeAt(1);
+        assertFalse(tagsArray.isNullable()); // Array itself is NOT NULL
+        assertFalse(tagsArray.getElementType().isNullable()); // Elements are NOT NULL
+    }
+
+    @Test
+    void testNotNullCaseInsensitive() {
+        // Test that NOT NULL is case-insensitive
+        DataType dataType1 = SchemaParser.parseSchema("id INT NOT NULL");
+        DataType dataType2 = SchemaParser.parseSchema("id INT not null");
+        DataType dataType3 = SchemaParser.parseSchema("id INT Not Null");
+
+        RowType rowType1 = (RowType) dataType1.getLogicalType();
+        RowType rowType2 = (RowType) dataType2.getLogicalType();
+        RowType rowType3 = (RowType) dataType3.getLogicalType();
+
+        assertFalse(rowType1.getTypeAt(0).isNullable());
+        assertFalse(rowType2.getTypeAt(0).isNullable());
+        assertFalse(rowType3.getTypeAt(0).isNullable());
     }
 
     @Test

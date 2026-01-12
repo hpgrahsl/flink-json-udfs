@@ -34,7 +34,7 @@ import java.util.regex.Pattern;
 public class SchemaParser {
 
     private static final Pattern FIELD_PATTERN = Pattern.compile(
-        "([a-zA-Z_][a-zA-Z0-9_]*)\\s+(.+)",
+        "(?:([a-zA-Z_][a-zA-Z0-9_]*)|`([^`]+)`)\\s+(.+)",
         Pattern.CASE_INSENSITIVE
     );
 
@@ -43,13 +43,16 @@ public class SchemaParser {
         Pattern.CASE_INSENSITIVE
     );
 
+    private static final String NOT_NULL_SUFFIX = "NOT NULL";
+
     /**
      * Parses a schema string definition and returns a Flink ROW {@link DataType}.
      * The schema string should contain field definitions separated by commas,
-     * where each field definition follows the format "fieldName TYPE".
+     * where each field definition follows the format "fieldName TYPE" or "`fieldName` TYPE".
+     * Field names can optionally be wrapped in backticks to support reserved keywords or special characters.
      *
-     * @param schemaString the schema string in format {@code "field1 TYPE1, field2 TYPE2, ..."};
-     *                     must not be null or empty
+     * @param schemaString the schema string in format {@code "field1 TYPE1, field2 TYPE2, ..."} or
+     *                     {@code "`field1` TYPE1, `field2` TYPE2, ..."}; must not be null or empty
      * @return a Flink {@link DataType} representing the ROW structure with the specified fields
      * @throws IllegalArgumentException if schemaString is null or empty, if any field definition is invalid,
      *                                  or if the schema contains no fields
@@ -71,12 +74,13 @@ public class SchemaParser {
             Matcher matcher = FIELD_PATTERN.matcher(fieldDef);
             if (!matcher.matches()) {
                 throw new IllegalArgumentException(
-                    "invalid field definition: '" + fieldDef + "' - expected format: 'fieldName TYPE'"
+                    "invalid field definition: '" + fieldDef + "' - expected format: 'fieldName TYPE' or '`fieldName` TYPE'"
                 );
             }
 
-            String fieldName = matcher.group(1);
-            String typeString = matcher.group(2);
+            // Group 1: standard identifier, Group 2: backtick-quoted identifier, Group 3: type
+            String fieldName = matcher.group(1) != null ? matcher.group(1) : matcher.group(2);
+            String typeString = matcher.group(3);
 
             DataType fieldType = parseType(typeString);
             fields.add(DataTypes.FIELD(fieldName, fieldType));
@@ -140,6 +144,7 @@ public class SchemaParser {
      * Supports both simple types (e.g., {@code "INT"}, {@code "STRING"}) and complex types
      * (e.g., {@code "ARRAY<STRING>"}, {@code "ROW<field1 INT, field2 STRING>"}).
      * Also handles parameterized types such as {@code "VARCHAR(50)"}, {@code "DECIMAL(10,2)"}, {@code "CHAR(5)"}.
+     * Supports nullability constraint by appending {@code "NOT NULL"} (e.g., {@code "INT NOT NULL"}).
      *
      * @param typeString the type string to parse; must not be null or empty
      * @return the parsed Flink {@link DataType}
@@ -149,14 +154,41 @@ public class SchemaParser {
         typeString = typeString.trim();
         String typeStringUpper = typeString.toUpperCase();
 
+        // Check for NOT NULL constraint and strip it
+        boolean isNotNull = false;
+        if (typeStringUpper.endsWith(NOT_NULL_SUFFIX)) {
+            isNotNull = true;
+            // Remove NOT NULL from the end, preserving original casing for the type part
+            typeString = typeString.substring(0, typeString.length() - NOT_NULL_SUFFIX.length()).trim();
+            typeStringUpper = typeString.toUpperCase();
+        }
+
+        DataType dataType;
+
         // check for complex types first (ARRAY, ROW, MAP) before extracting parameters
         if (typeStringUpper.startsWith("ROW<")) {
-            return parseRowType(typeString);
+            dataType = parseRowType(typeString);
         } else if (typeStringUpper.startsWith("MAP<")) {
-            return parseMapType(typeString);
+            dataType = parseMapType(typeString);
         } else if (typeStringUpper.startsWith("ARRAY<")) {
-            return parseArrayType(typeString);            
+            dataType = parseArrayType(typeString);
+        } else {
+            dataType = parseSimpleType(typeString, typeStringUpper);
         }
+
+        // Apply NOT NULL constraint if present
+        return isNotNull ? dataType.notNull() : dataType;
+    }
+
+    /**
+     * Parses simple (non-complex) type definitions including primitives and parameterized types.
+     *
+     * @param typeString the original type string preserving casing
+     * @param typeStringUpper the uppercase version of the type string
+     * @return the parsed Flink {@link DataType}
+     * @throws IllegalArgumentException if the type is unsupported
+     */
+    private static DataType parseSimpleType(String typeString, String typeStringUpper) {
 
         // extract type name and optional parameters
         Matcher matcher = TYPE_PARAM_PATTERN.matcher(typeStringUpper);
@@ -213,6 +245,7 @@ public class SchemaParser {
                 return DataTypes.TINYINT();
             case "SMALLINT":
                 return DataTypes.SMALLINT();
+            case "INTEGER":
             case "INT":
                 return DataTypes.INT();
             case "BIGINT":
@@ -274,7 +307,9 @@ public class SchemaParser {
         if (!typeString.toUpperCase().startsWith("ARRAY<")) {
             throw new IllegalArgumentException("Invalid ARRAY type format: " + typeString);
         }
-        String content = extractBracketedContent(typeString, "ARRAY".length());
+        // Find the actual position of '<' to preserve original casing
+        int bracketPos = typeString.indexOf('<');
+        String content = extractBracketedContent(typeString, bracketPos);
         if (content == null) {
             throw new IllegalArgumentException("Invalid ARRAY type format: " + typeString);
         }
@@ -298,7 +333,9 @@ public class SchemaParser {
             throw new IllegalArgumentException("Invalid MAP type format: " + typeString);
         }
 
-        String content = extractBracketedContent(typeString, "MAP".length());
+        // Find the actual position of '<' to preserve original casing
+        int bracketPos = typeString.indexOf('<');
+        String content = extractBracketedContent(typeString, bracketPos);
         if (content == null) {
             throw new IllegalArgumentException("Invalid MAP type format: " + typeString);
         }
@@ -326,15 +363,13 @@ public class SchemaParser {
      */
     static DataType parseRowType(String typeString) {
         // extract content from ROW<...>
-        String upper = typeString.toUpperCase();
-        int offset;
-        if (upper.startsWith("ROW<")) {
-            offset = "ROW".length();
-        } else {
+        if (!typeString.toUpperCase().startsWith("ROW<")) {
             throw new IllegalArgumentException("invalid ROW type format: " + typeString);
         }
 
-        String content = extractBracketedContent(typeString, offset);
+        // Find the actual position of '<' to preserve original casing of field names
+        int bracketPos = typeString.indexOf('<');
+        String content = extractBracketedContent(typeString, bracketPos);
         if (content == null) {
             throw new IllegalArgumentException("invalid ROW type format: " + typeString);
         }
