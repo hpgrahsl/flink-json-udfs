@@ -34,7 +34,7 @@ import java.util.regex.Pattern;
 public class SchemaParser {
 
     private static final Pattern FIELD_PATTERN = Pattern.compile(
-        "([a-zA-Z_][a-zA-Z0-9_]*)\\s+(.+)",
+        "(?:([a-zA-Z_][a-zA-Z0-9_]*)|`([^`]+)`)\\s+(.+)",
         Pattern.CASE_INSENSITIVE
     );
 
@@ -46,10 +46,11 @@ public class SchemaParser {
     /**
      * Parses a schema string definition and returns a Flink ROW {@link DataType}.
      * The schema string should contain field definitions separated by commas,
-     * where each field definition follows the format "fieldName TYPE".
+     * where each field definition follows the format "fieldName TYPE" or "`fieldName` TYPE".
+     * Field names can optionally be wrapped in backticks to support reserved keywords or special characters.
      *
-     * @param schemaString the schema string in format {@code "field1 TYPE1, field2 TYPE2, ..."};
-     *                     must not be null or empty
+     * @param schemaString the schema string in format {@code "field1 TYPE1, field2 TYPE2, ..."} or
+     *                     {@code "`field1` TYPE1, `field2` TYPE2, ..."}; must not be null or empty
      * @return a Flink {@link DataType} representing the ROW structure with the specified fields
      * @throws IllegalArgumentException if schemaString is null or empty, if any field definition is invalid,
      *                                  or if the schema contains no fields
@@ -71,12 +72,13 @@ public class SchemaParser {
             Matcher matcher = FIELD_PATTERN.matcher(fieldDef);
             if (!matcher.matches()) {
                 throw new IllegalArgumentException(
-                    "invalid field definition: '" + fieldDef + "' - expected format: 'fieldName TYPE'"
+                    "invalid field definition: '" + fieldDef + "' - expected format: 'fieldName TYPE' or '`fieldName` TYPE'"
                 );
             }
 
-            String fieldName = matcher.group(1);
-            String typeString = matcher.group(2);
+            // Group 1: standard identifier, Group 2: backtick-quoted identifier, Group 3: type
+            String fieldName = matcher.group(1) != null ? matcher.group(1) : matcher.group(2);
+            String typeString = matcher.group(3);
 
             DataType fieldType = parseType(typeString);
             fields.add(DataTypes.FIELD(fieldName, fieldType));

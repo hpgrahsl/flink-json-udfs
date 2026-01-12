@@ -249,6 +249,161 @@ class SchemaParserTest {
     }
 
     @Test
+    void testBackticksForNonKeywords() {
+        // Backticks are optional for non-keywords but should work
+        DataType dataType = SchemaParser.parseSchema("`id` INT, `name` STRING, `age` BIGINT");
+        RowType rowType = (RowType) dataType.getLogicalType();
+
+        assertEquals(3, rowType.getFieldCount());
+        assertEquals("id", rowType.getFieldNames().get(0));
+        assertEquals("name", rowType.getFieldNames().get(1));
+        assertEquals("age", rowType.getFieldNames().get(2));
+        assertTrue(rowType.getTypeAt(0) instanceof IntType);
+        assertTrue(rowType.getTypeAt(1) instanceof VarCharType);
+        assertTrue(rowType.getTypeAt(2) instanceof BigIntType);
+    }
+
+    @Test
+    void testBackticksForReservedKeywords() {
+        // Reserved keywords like count, catalog, table, order, select must use backticks
+        DataType dataType = SchemaParser.parseSchema("`count` INT, `catalog` STRING, `table` STRING, `order` BIGINT, `select` DOUBLE");
+        RowType rowType = (RowType) dataType.getLogicalType();
+
+        assertEquals(5, rowType.getFieldCount());
+        assertEquals("count", rowType.getFieldNames().get(0));
+        assertEquals("catalog", rowType.getFieldNames().get(1));
+        assertEquals("table", rowType.getFieldNames().get(2));
+        assertEquals("order", rowType.getFieldNames().get(3));
+        assertEquals("select", rowType.getFieldNames().get(4));
+        assertTrue(rowType.getTypeAt(0) instanceof IntType);
+        assertTrue(rowType.getTypeAt(1) instanceof VarCharType);
+        assertTrue(rowType.getTypeAt(2) instanceof VarCharType);
+        assertTrue(rowType.getTypeAt(3) instanceof BigIntType);
+        assertTrue(rowType.getTypeAt(4) instanceof DoubleType);
+    }
+
+    @Test
+    void testMixedBackticksAndStandard() {
+        // Mix of backticked and standard field names
+        DataType dataType = SchemaParser.parseSchema("id INT, `count` BIGINT, name STRING, `order` INT");
+        RowType rowType = (RowType) dataType.getLogicalType();
+
+        assertEquals(4, rowType.getFieldCount());
+        assertEquals("id", rowType.getFieldNames().get(0));
+        assertEquals("count", rowType.getFieldNames().get(1));
+        assertEquals("name", rowType.getFieldNames().get(2));
+        assertEquals("order", rowType.getFieldNames().get(3));
+    }
+
+    @Test
+    void testBackticksWithSpecialCharacters() {
+        // Backticks allow special characters in field names
+        DataType dataType = SchemaParser.parseSchema("`field-name` INT, `field.name` STRING, `field name` BIGINT");
+        RowType rowType = (RowType) dataType.getLogicalType();
+
+        assertEquals(3, rowType.getFieldCount());
+        assertEquals("field-name", rowType.getFieldNames().get(0));
+        assertEquals("field.name", rowType.getFieldNames().get(1));
+        assertEquals("field name", rowType.getFieldNames().get(2));
+    }
+
+    @Test
+    void testBackticksPreserveCasing() {
+        // Backticks should preserve field name casing
+        DataType dataType = SchemaParser.parseSchema("`userId` INT, `userName` STRING, `UserEmail` STRING");
+        RowType rowType = (RowType) dataType.getLogicalType();
+
+        assertEquals(3, rowType.getFieldCount());
+        assertEquals("userId", rowType.getFieldNames().get(0));
+        assertEquals("userName", rowType.getFieldNames().get(1));
+        assertEquals("UserEmail", rowType.getFieldNames().get(2));
+    }
+
+    @Test
+    void testBackticksInNestedRow() {
+        // Backticks in nested ROW types
+        DataType dataType = SchemaParser.parseSchema("`user` ROW<`user-id` INT, `user-name` STRING, `count` BIGINT>");
+        RowType rowType = (RowType) dataType.getLogicalType();
+
+        assertEquals("user", rowType.getFieldNames().get(0));
+        RowType nestedRow = (RowType) rowType.getTypeAt(0);
+
+        assertEquals(3, nestedRow.getFieldCount());
+        assertEquals("user-id", nestedRow.getFieldNames().get(0));
+        assertEquals("user-name", nestedRow.getFieldNames().get(1));
+        assertEquals("count", nestedRow.getFieldNames().get(2));
+    }
+
+    @Test
+    void testBackticksInArrayOfRows() {
+        // Backticks in ARRAY<ROW<...>>
+        DataType dataType = SchemaParser.parseSchema("`items` ARRAY<ROW<`item-id` INT, `order` STRING>>");
+        RowType rowType = (RowType) dataType.getLogicalType();
+
+        assertEquals("items", rowType.getFieldNames().get(0));
+        ArrayType arrayType = (ArrayType) rowType.getTypeAt(0);
+        RowType elementRow = (RowType) arrayType.getElementType();
+
+        assertEquals(2, elementRow.getFieldCount());
+        assertEquals("item-id", elementRow.getFieldNames().get(0));
+        assertEquals("order", elementRow.getFieldNames().get(1));
+    }
+
+    @Test
+    void testBackticksInMapOfRows() {
+        // Backticks in MAP<K, ROW<...>>
+        DataType dataType = SchemaParser.parseSchema("`metadata` MAP<STRING, ROW<`created-by` STRING, `table` STRING>>");
+        RowType rowType = (RowType) dataType.getLogicalType();
+
+        assertEquals("metadata", rowType.getFieldNames().get(0));
+        MapType mapType = (MapType) rowType.getTypeAt(0);
+        RowType valueRow = (RowType) mapType.getValueType();
+
+        assertEquals(2, valueRow.getFieldCount());
+        assertEquals("created-by", valueRow.getFieldNames().get(0));
+        assertEquals("table", valueRow.getFieldNames().get(1));
+    }
+
+    @Test
+    void testBackticksWithMoreReservedKeywords() {
+        // Test additional reserved keywords: database, index, key, primary, foreign, constraint
+        DataType dataType = SchemaParser.parseSchema(
+            "`database` STRING, `index` INT, `key` STRING, `primary` BOOLEAN, `foreign` BIGINT, `constraint` STRING"
+        );
+        RowType rowType = (RowType) dataType.getLogicalType();
+
+        assertEquals(6, rowType.getFieldCount());
+        assertEquals("database", rowType.getFieldNames().get(0));
+        assertEquals("index", rowType.getFieldNames().get(1));
+        assertEquals("key", rowType.getFieldNames().get(2));
+        assertEquals("primary", rowType.getFieldNames().get(3));
+        assertEquals("foreign", rowType.getFieldNames().get(4));
+        assertEquals("constraint", rowType.getFieldNames().get(5));
+    }
+
+    @Test
+    void testBackticksInDeeplyNestedStructure() {
+        // Complex nested structure with backticks throughout
+        DataType dataType = SchemaParser.parseSchema(
+            "`user` ROW<`user-id` INT, `profile` ROW<`user-name` STRING, `count` INT, `order` BIGINT>>"
+        );
+        RowType rowType = (RowType) dataType.getLogicalType();
+
+        assertEquals("user", rowType.getFieldNames().get(0));
+        RowType userRow = (RowType) rowType.getTypeAt(0);
+
+        assertEquals(2, userRow.getFieldCount());
+        assertEquals("user-id", userRow.getFieldNames().get(0));
+        assertEquals("profile", userRow.getFieldNames().get(1));
+
+        RowType profileRow = (RowType) userRow.getTypeAt(1);
+        assertEquals(3, profileRow.getFieldCount());
+        assertEquals("user-name", profileRow.getFieldNames().get(0));
+        assertEquals("count", profileRow.getFieldNames().get(1));
+        assertEquals("order", profileRow.getFieldNames().get(2));
+    }
+
+    @Test
     void testGetFieldNames() {
         DataType dataType = SchemaParser.parseSchema("id INT, name STRING, active BOOLEAN");
         List<String> fieldNames = SchemaParser.getFieldNames(dataType);

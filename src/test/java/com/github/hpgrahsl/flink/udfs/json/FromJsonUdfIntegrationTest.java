@@ -621,4 +621,63 @@ public class FromJsonUdfIntegrationTest {
         assertEquals(456, nestedRow.getField(0));
         assertEquals("Bob", nestedRow.getField(1));
     }
+
+    @Test
+    public void testBacktickedFieldNamesWithReservedKeywords() throws Exception {
+        // Test field names that are SQL reserved keywords using backticks
+        var inputTable = T_ENV.fromValues(
+            DataTypes.ROW(DataTypes.FIELD("json", DataTypes.STRING())),
+            Row.of("{\"count\": 100, \"order\": 5, \"table\": \"users\", \"select\": 42}")
+        );
+
+        T_ENV.createTemporaryView("input_table", inputTable);
+
+        // Use backticks for reserved keyword field names
+        var outputTable = T_ENV.sqlQuery(
+            "SELECT FROM_JSON(json, 'ROW<`count` INT, `order` INT, `table` STRING, `select` INT>') AS udf_result FROM input_table"
+        );
+        var outputStream = T_ENV.toDataStream(outputTable);
+
+        List<Row> results = new ArrayList<>();
+        try (CloseableIterator<Row> rowIter = outputStream.executeAndCollect()) {
+            rowIter.forEachRemaining(r -> results.add(r.getFieldAs("udf_result")));
+        }
+
+        assertEquals(1, results.size());
+        Row result = results.get(0);
+
+        // Verify the values are correctly mapped
+        assertEquals(100, result.getField(0));
+        assertEquals(5, result.getField(1));
+        assertEquals("users", result.getField(2));
+        assertEquals(42, result.getField(3));
+    }
+
+    @Test
+    public void testBacktickedFieldNamesWithSpecialCharacters() throws Exception {
+        // Test field names with special characters that require backticks
+        var inputTable = T_ENV.fromValues(
+            DataTypes.ROW(DataTypes.FIELD("json", DataTypes.STRING())),
+            Row.of("{\"user-id\": 123, \"user.name\": \"Alice\", \"user email\": \"alice@example.com\"}")
+        );
+
+        T_ENV.createTemporaryView("input_table", inputTable);
+
+        var outputTable = T_ENV.sqlQuery(
+            "SELECT FROM_JSON(json, 'ROW<`user-id` INT, `user.name` STRING, `user email` STRING>') AS udf_result FROM input_table"
+        );
+        var outputStream = T_ENV.toDataStream(outputTable);
+
+        List<Row> results = new ArrayList<>();
+        try (CloseableIterator<Row> rowIter = outputStream.executeAndCollect()) {
+            rowIter.forEachRemaining(r -> results.add(r.getFieldAs("udf_result")));
+        }
+
+        assertEquals(1, results.size());
+        Row result = results.get(0);
+
+        assertEquals(123, result.getField(0));
+        assertEquals("Alice", result.getField(1));
+        assertEquals("alice@example.com", result.getField(2));
+    }
 }
