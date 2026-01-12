@@ -43,6 +43,8 @@ public class SchemaParser {
         Pattern.CASE_INSENSITIVE
     );
 
+    private static final String NOT_NULL_SUFFIX = "NOT NULL";
+
     /**
      * Parses a schema string definition and returns a Flink ROW {@link DataType}.
      * The schema string should contain field definitions separated by commas,
@@ -142,6 +144,7 @@ public class SchemaParser {
      * Supports both simple types (e.g., {@code "INT"}, {@code "STRING"}) and complex types
      * (e.g., {@code "ARRAY<STRING>"}, {@code "ROW<field1 INT, field2 STRING>"}).
      * Also handles parameterized types such as {@code "VARCHAR(50)"}, {@code "DECIMAL(10,2)"}, {@code "CHAR(5)"}.
+     * Supports nullability constraint by appending {@code "NOT NULL"} (e.g., {@code "INT NOT NULL"}).
      *
      * @param typeString the type string to parse; must not be null or empty
      * @return the parsed Flink {@link DataType}
@@ -151,14 +154,41 @@ public class SchemaParser {
         typeString = typeString.trim();
         String typeStringUpper = typeString.toUpperCase();
 
+        // Check for NOT NULL constraint and strip it
+        boolean isNotNull = false;
+        if (typeStringUpper.endsWith(NOT_NULL_SUFFIX)) {
+            isNotNull = true;
+            // Remove NOT NULL from the end, preserving original casing for the type part
+            typeString = typeString.substring(0, typeString.length() - NOT_NULL_SUFFIX.length()).trim();
+            typeStringUpper = typeString.toUpperCase();
+        }
+
+        DataType dataType;
+
         // check for complex types first (ARRAY, ROW, MAP) before extracting parameters
         if (typeStringUpper.startsWith("ROW<")) {
-            return parseRowType(typeString);
+            dataType = parseRowType(typeString);
         } else if (typeStringUpper.startsWith("MAP<")) {
-            return parseMapType(typeString);
+            dataType = parseMapType(typeString);
         } else if (typeStringUpper.startsWith("ARRAY<")) {
-            return parseArrayType(typeString);            
+            dataType = parseArrayType(typeString);
+        } else {
+            dataType = parseSimpleType(typeString, typeStringUpper);
         }
+
+        // Apply NOT NULL constraint if present
+        return isNotNull ? dataType.notNull() : dataType;
+    }
+
+    /**
+     * Parses simple (non-complex) type definitions including primitives and parameterized types.
+     *
+     * @param typeString the original type string preserving casing
+     * @param typeStringUpper the uppercase version of the type string
+     * @return the parsed Flink {@link DataType}
+     * @throws IllegalArgumentException if the type is unsupported
+     */
+    private static DataType parseSimpleType(String typeString, String typeStringUpper) {
 
         // extract type name and optional parameters
         Matcher matcher = TYPE_PARAM_PATTERN.matcher(typeStringUpper);

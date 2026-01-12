@@ -404,6 +404,199 @@ class SchemaParserTest {
     }
 
     @Test
+    void testNotNullForSimpleTypes() {
+        // Test NOT NULL constraint on simple types
+        DataType dataType = SchemaParser.parseSchema("id INT NOT NULL, name STRING NOT NULL, age BIGINT");
+        RowType rowType = (RowType) dataType.getLogicalType();
+
+        assertEquals(3, rowType.getFieldCount());
+
+        // id INT NOT NULL - should be non-nullable
+        assertTrue(rowType.getTypeAt(0) instanceof IntType);
+        assertFalse(rowType.getTypeAt(0).isNullable());
+
+        // name STRING NOT NULL - should be non-nullable
+        assertTrue(rowType.getTypeAt(1) instanceof VarCharType);
+        assertFalse(rowType.getTypeAt(1).isNullable());
+
+        // age BIGINT - should be nullable (default)
+        assertTrue(rowType.getTypeAt(2) instanceof BigIntType);
+        assertTrue(rowType.getTypeAt(2).isNullable());
+    }
+
+    @Test
+    void testNotNullWithParameterizedTypes() {
+        // Test NOT NULL with parameterized types
+        DataType dataType = SchemaParser.parseSchema(
+            "name VARCHAR(50) NOT NULL, code CHAR(5) NOT NULL, price DECIMAL(10,2) NOT NULL"
+        );
+        RowType rowType = (RowType) dataType.getLogicalType();
+
+        assertEquals(3, rowType.getFieldCount());
+
+        VarCharType nameType = (VarCharType) rowType.getTypeAt(0);
+        assertEquals(50, nameType.getLength());
+        assertFalse(nameType.isNullable());
+
+        CharType codeType = (CharType) rowType.getTypeAt(1);
+        assertEquals(5, codeType.getLength());
+        assertFalse(codeType.isNullable());
+
+        DecimalType priceType = (DecimalType) rowType.getTypeAt(2);
+        assertEquals(10, priceType.getPrecision());
+        assertEquals(2, priceType.getScale());
+        assertFalse(priceType.isNullable());
+    }
+
+    @Test
+    void testNotNullWithComplexTypes() {
+        // Test NOT NULL on ARRAY, ROW, and MAP types themselves
+        DataType dataType = SchemaParser.parseSchema(
+            "tags ARRAY<STRING> NOT NULL, user ROW<id INT, name STRING> NOT NULL, meta MAP<STRING, INT> NOT NULL"
+        );
+        RowType rowType = (RowType) dataType.getLogicalType();
+
+        assertEquals(3, rowType.getFieldCount());
+
+        // tags ARRAY - the array itself is non-nullable
+        assertTrue(rowType.getTypeAt(0) instanceof ArrayType);
+        assertFalse(rowType.getTypeAt(0).isNullable());
+
+        // user ROW - the row itself is non-nullable
+        assertTrue(rowType.getTypeAt(1) instanceof RowType);
+        assertFalse(rowType.getTypeAt(1).isNullable());
+
+        // meta MAP - the map itself is non-nullable
+        assertTrue(rowType.getTypeAt(2) instanceof MapType);
+        assertFalse(rowType.getTypeAt(2).isNullable());
+    }
+
+    @Test
+    void testNotNullInNestedRow() {
+        // Test NOT NULL inside nested ROW fields
+        DataType dataType = SchemaParser.parseSchema(
+            "user ROW<id INT NOT NULL, name STRING NOT NULL, email STRING>"
+        );
+        RowType rowType = (RowType) dataType.getLogicalType();
+
+        assertEquals("user", rowType.getFieldNames().get(0));
+        RowType nestedRow = (RowType) rowType.getTypeAt(0);
+
+        assertEquals(3, nestedRow.getFieldCount());
+
+        // id INT NOT NULL
+        assertTrue(nestedRow.getTypeAt(0) instanceof IntType);
+        assertFalse(nestedRow.getTypeAt(0).isNullable());
+
+        // name STRING NOT NULL
+        assertTrue(nestedRow.getTypeAt(1) instanceof VarCharType);
+        assertFalse(nestedRow.getTypeAt(1).isNullable());
+
+        // email STRING (nullable)
+        assertTrue(nestedRow.getTypeAt(2) instanceof VarCharType);
+        assertTrue(nestedRow.getTypeAt(2).isNullable());
+    }
+
+    @Test
+    void testNotNullInArrayElementType() {
+        // Test NOT NULL on array element types
+        DataType dataType = SchemaParser.parseSchema("ids ARRAY<INT NOT NULL>");
+        RowType rowType = (RowType) dataType.getLogicalType();
+
+        assertEquals("ids", rowType.getFieldNames().get(0));
+        ArrayType arrayType = (ArrayType) rowType.getTypeAt(0);
+
+        // Array itself is nullable
+        assertTrue(arrayType.isNullable());
+
+        // But elements are non-nullable
+        assertTrue(arrayType.getElementType() instanceof IntType);
+        assertFalse(arrayType.getElementType().isNullable());
+    }
+
+    @Test
+    void testNotNullInMapValueType() {
+        // Test NOT NULL on map value types
+        DataType dataType = SchemaParser.parseSchema("counters MAP<STRING, INT NOT NULL>");
+        RowType rowType = (RowType) dataType.getLogicalType();
+
+        assertEquals("counters", rowType.getFieldNames().get(0));
+        MapType mapType = (MapType) rowType.getTypeAt(0);
+
+        // Map itself is nullable
+        assertTrue(mapType.isNullable());
+
+        // Value type is non-nullable
+        assertTrue(mapType.getValueType() instanceof IntType);
+        assertFalse(mapType.getValueType().isNullable());
+
+        // Key type is nullable (default)
+        assertTrue(mapType.getKeyType() instanceof VarCharType);
+        assertTrue(mapType.getKeyType().isNullable());
+    }
+
+    @Test
+    void testNotNullCombinedWithBackticks() {
+        // Test NOT NULL combined with backticked field names
+        DataType dataType = SchemaParser.parseSchema(
+            "`count` INT NOT NULL, `order` BIGINT NOT NULL, `table` STRING NOT NULL"
+        );
+        RowType rowType = (RowType) dataType.getLogicalType();
+
+        assertEquals(3, rowType.getFieldCount());
+        assertEquals("count", rowType.getFieldNames().get(0));
+        assertEquals("order", rowType.getFieldNames().get(1));
+        assertEquals("table", rowType.getFieldNames().get(2));
+
+        assertFalse(rowType.getTypeAt(0).isNullable());
+        assertFalse(rowType.getTypeAt(1).isNullable());
+        assertFalse(rowType.getTypeAt(2).isNullable());
+    }
+
+    @Test
+    void testNotNullInComplexNestedStructure() {
+        // Complex nested structure with NOT NULL at various levels
+        DataType dataType = SchemaParser.parseSchema(
+            "user ROW<id INT NOT NULL, profile ROW<name STRING NOT NULL, tags ARRAY<STRING NOT NULL> NOT NULL> NOT NULL>"
+        );
+        RowType rowType = (RowType) dataType.getLogicalType();
+
+        RowType userRow = (RowType) rowType.getTypeAt(0);
+        assertEquals(2, userRow.getFieldCount());
+
+        // id INT NOT NULL
+        assertFalse(userRow.getTypeAt(0).isNullable());
+
+        // profile ROW<...> NOT NULL
+        RowType profileRow = (RowType) userRow.getTypeAt(1);
+        assertFalse(profileRow.isNullable());
+
+        // name STRING NOT NULL
+        assertFalse(profileRow.getTypeAt(0).isNullable());
+
+        // tags ARRAY<STRING NOT NULL> NOT NULL
+        ArrayType tagsArray = (ArrayType) profileRow.getTypeAt(1);
+        assertFalse(tagsArray.isNullable()); // Array itself is NOT NULL
+        assertFalse(tagsArray.getElementType().isNullable()); // Elements are NOT NULL
+    }
+
+    @Test
+    void testNotNullCaseInsensitive() {
+        // Test that NOT NULL is case-insensitive
+        DataType dataType1 = SchemaParser.parseSchema("id INT NOT NULL");
+        DataType dataType2 = SchemaParser.parseSchema("id INT not null");
+        DataType dataType3 = SchemaParser.parseSchema("id INT Not Null");
+
+        RowType rowType1 = (RowType) dataType1.getLogicalType();
+        RowType rowType2 = (RowType) dataType2.getLogicalType();
+        RowType rowType3 = (RowType) dataType3.getLogicalType();
+
+        assertFalse(rowType1.getTypeAt(0).isNullable());
+        assertFalse(rowType2.getTypeAt(0).isNullable());
+        assertFalse(rowType3.getTypeAt(0).isNullable());
+    }
+
+    @Test
     void testGetFieldNames() {
         DataType dataType = SchemaParser.parseSchema("id INT, name STRING, active BOOLEAN");
         List<String> fieldNames = SchemaParser.getFieldNames(dataType);
